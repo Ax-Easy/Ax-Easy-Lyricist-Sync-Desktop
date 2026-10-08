@@ -96,6 +96,9 @@ def is_ready():
     return bool(s and s.get('ok') and os.path.exists(paths.runtime_python())) or bool(os.environ.get('LYRICIST_SYNC_PYTHON'))
 
 
+BELOW_NORMAL = 0x00004000 if os.name == 'nt' else 0  # BELOW_NORMAL_PRIORITY_CLASS
+
+
 def popen(args, **kw):
     """subprocess.Popen without PyInstaller's DLL directory leaking into the child
     (the child is a different Python and must load its own python311.dll)."""
@@ -356,10 +359,12 @@ class Setup:
 
     # ---- install
     def _run(self, args, what, sid=None):
+        # pip unpacks and byte-compiles thousands of files: below-normal priority keeps the
+        # window responsive on busy machines (it only yields to interactive work)
         """Run a child with its output streamed line by line to setup.log (never an unread pipe)."""
         self.log('$ ' + ' '.join(os.path.basename(a) if os.path.isabs(a) else a for a in args[:8]) + (' …' if len(args) > 8 else ''))
         p = popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
-                  encoding='utf-8', errors='replace', env=engine_env(), creationflags=NO_WINDOW)
+                  encoding='utf-8', errors='replace', env=engine_env(), creationflags=NO_WINDOW | BELOW_NORMAL)
         tail = []
         for line in p.stdout:  # this worker is the reader: the pipe never fills up
             line = line.rstrip()
