@@ -1,11 +1,12 @@
 """Glass cards, pill buttons, the rounded progress bar and the review table."""
-from PySide6.QtCore import Property, QEasingCurve, QPoint, QPropertyAnimation, QRectF, Qt, Signal
+from PySide6.QtCore import Property, QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import QAbstractItemView, QPushButton, QTableWidget, QWidget
 
 from .theme import ACCENT, ACCENT_2
 
 STATE = {'dark': True}  # current theme for custom-painted widgets
+AMBER = '#E0A106'      # 'check this line' marker
 
 
 class GlassCard(QWidget):
@@ -120,26 +121,128 @@ class PillButton(QPushButton):
         p.drawText(self.rect().adjusted(0, dy, 0, dy), Qt.AlignCenter, self.text())
 
 
-class GlassProgress(QWidget):
-    """Rounded progress bar with an accent gradient chunk and a percent label."""
+class IconPillButton(PillButton):
+    """Pill with a painted icon ('update': circular arrows) and an optional badge dot."""
 
-    def __init__(self, parent=None):
+    def __init__(self, text, icon='update', kind='ghost', parent=None):
+        super().__init__('      ' + text, kind, parent)
+        self.icon = icon
+        self._badge = False
+        self.setMinimumWidth(104)
+
+    def set_badge(self, on):
+        self._badge = bool(on)
+        self.update()
+
+    def badge(self):
+        return self._badge
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor(self.palette().color(QPalette.ColorRole.ButtonText))
+        if not self.isEnabled():
+            col.setAlpha(110)
+        fm = self.fontMetrics()
+        tw = fm.horizontalAdvance(self.text().strip())
+        cx = self.width() / 2 - tw / 2 - 6
+        cy = self.height() / 2 + (1 if self._press else 0)
+        r = 5.5
+        pen = QPen(col, 1.6, Qt.SolidLine, Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        box = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+        # two arcs with arrow heads = circular arrows
+        p.drawArc(box, 30 * 16, 150 * 16)
+        p.drawArc(box, 210 * 16, 150 * 16)
+        import math
+        for ang in (30, 210):
+            a = math.radians(ang)
+            x, y = cx + r * math.cos(a), cy - r * math.sin(a)
+            # arrow head pointing along the clockwise tangent
+            tx, ty = math.sin(a), math.cos(a)
+            nx, ny = math.cos(a), -math.sin(a)
+            p.drawLine(QPointF(x, y), QPointF(x - 3.2 * tx + 2.4 * nx, y - 3.2 * ty + 2.4 * ny))
+            p.drawLine(QPointF(x, y), QPointF(x - 3.2 * tx - 2.4 * nx, y - 3.2 * ty - 2.4 * ny))
+        if self._badge:
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
+            p.setBrush(QColor(ACCENT))
+            p.drawEllipse(QPointF(self.width() - 13, 9), 4.5, 4.5)
+
+
+class GlassProgress(QWidget):
+    """Rounded progress bar with an accent gradient chunk and a percent label; thin=True
+    for step rows (no label); indeterminate mode animates a glass sweep."""
+
+    def __init__(self, parent=None, thin=False):
         super().__init__(parent)
         self._pct = 0.0
-        self.setMinimumHeight(16)
-        self.setMaximumHeight(16)
+        self.thin = thin
+        self._ind = False
+        self._pos = 0.0
+        h = 8 if thin else 16
+        self.setMinimumHeight(h)
+        self.setMaximumHeight(h)
+        self._anim = None
 
     def set_value(self, pct):
-        self._pct = max(0.0, min(1.0, pct))
+        pct = max(0.0, min(1.0, pct))
+        if abs(pct - self._pct) > 1e-4:
+            self._pct = pct
+            self.update()
+
+    def set_indeterminate(self, on):
+        on = bool(on)
+        if on == self._ind:
+            return
+        self._ind = on
+        from PySide6.QtCore import QTimer
+        if on:
+            self._anim = QTimer(self)
+            self._anim.timeout.connect(self._tick)
+            self._anim.start(33)
+        elif self._anim:
+            self._anim.stop()
+            self._anim = None
+        self.update()
+
+    def _tick(self):
+        self._pos = (self._pos + 0.018) % 1.4
         self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        rad = r.height() / 2
         path = QPainterPath()
-        path.addRoundedRect(r, 8, 8)
+        path.addRoundedRect(r, rad, rad)
         p.fillPath(path, QColor(255, 255, 255, 18) if STATE['dark'] else QColor(20, 25, 40, 22))
+        if self._ind:
+            p.setClipPath(path)
+            w = r.width() * 0.3
+            x = r.x() + (self._pos - 0.3) * r.width()
+            g = QLinearGradient(x, 0, x + w, 0)
+            c0 = QColor(ACCENT)
+            c0.setAlpha(0)
+            g.setColorAt(0, c0)
+            g.setColorAt(0.5, QColor(ACCENT_2))
+            g.setColorAt(1, c0)
+            c = QPainterPath()
+            c.addRoundedRect(QRectF(x, r.y(), w, r.height()), rad, rad)
+            p.fillPath(c, QBrush(g))
+            return
+        if self.thin:
+            if self._pct > 0:
+                c = QPainterPath()
+                c.addRoundedRect(QRectF(r.x(), r.y(), max(r.height(), r.width() * self._pct), r.height()), rad, rad)
+                g = QLinearGradient(0, 0, r.width(), 0)
+                g.setColorAt(0, QColor(ACCENT_2))
+                g.setColorAt(1, QColor(ACCENT))
+                p.setClipPath(path)
+                p.fillPath(c, QBrush(g))
+            return
         if self._pct > 0:
             w = max(16, r.width() * self._pct)
             c = QPainterPath()

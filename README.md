@@ -18,7 +18,16 @@ For each song:
    (for example a chorus written once but sung twice, or lines 15–16 of *Stoned*). A dynamic-programming alignment
    of the transcript to the lyrics may jump back to an earlier line; every jump becomes a repeated block.
 3. **MMS_FA** (torchaudio forced aligner) aligns every sung line to the vocals and gives each line a start and end time.
-   Non-Latin lyrics such as **Greek** are romanized with **uroman** first.
+   Non-Latin lyrics such as **Greek** are romanized with **uroman** first. A wildcard token absorbs whatever is
+   sung that is not in the lyrics: hums, "ohhh" or ad-libs.
+4. **Timing checks** (1.1.0):
+   - A vocal-activity detector on the vocal stem makes sure no line starts where nobody sings. Each start snaps
+     to the vocal onset of its first word.
+   - Whisper's word times are a cross-check: if the aligner starts a line far ahead of the first matching
+     Whisper word, the later time wins.
+   - Starts are always in order, and lines never overlap.
+   - Every line gets a **confidence** score from the acoustic match, Whisper agreement and vocal overlap.
+     Lines below 0.6 are marked amber, with the reason, for a quick check.
 
 Tags such as `[Chorus]`, `[Ρεφρέν]` or `(x2)` on their own line are ignored. Lyrics can be UTF-8 (with or without
 a BOM), UTF-16 or Windows-1253 Greek.
@@ -39,8 +48,17 @@ more than 1 s. On the synthesized demo songs in `tests/fixtures`, every line was
    - Click **▶** to play from a line.
    - Select a line and nudge its start by **±0.1 s** or **±0.01 s**, or double-click a start time to type a new one.
    - `↻` marks a detected repeat. *too long* or *too short* flags an implausible line duration.
+   - An amber **● check** marks a line the engine is unsure about; hover over it to see why. This is typical of
+     choirs and backing vocals.
+   - **⟲ Re-sync from here**: fix one line by hand, then re-align only the lines after it. Earlier lines are kept.
+     It takes a few seconds, because the song analysis is cached.
 4. **Export**:
-   - Choose an output folder; the app remembers it.
+   - **Save to**: *Next to the audio file* (the default), *A chosen folder* or *Ask every time*.
+   - **Per song**: the queue has an **Output folder** column, and **Change…** sets a folder for one song. To set
+     one folder for several songs, select them and use **Set folder for selected…**. All of this is remembered.
+   - Existing files are never overwritten silently. You choose **Overwrite / Keep both / Skip**, with "do the
+     same for the other songs".
+   - When the export finishes, **Open folder** links appear.
    - Tick **TTML / LRC / SRT / VTT**; all four are on by default.
    - Files are named `Artist - Title.ext` from the ID3 tags, or from the audio file name when there are no tags.
      Greek names are kept.
@@ -55,6 +73,38 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 - **SRT**: UTF-8, with an optional BOM.
 - **VTT**: `WEBVTT`, never with a BOM.
 
+### Updates
+
+The **Update** button next to About checks `https://www.ax-easy.com/lyricist-sync/update.json`.
+- The quiet check on start runs at most once a day, and can be switched off in the update window.
+- The badge dot means a new version is out.
+- **Update now** downloads the installer to `%LOCALAPPDATA%\Ax-Easy\LyricistSync\updates`. The download
+  resumes if interrupted.
+- The installer's SHA256 is checked before it runs, and the app refuses a mismatch or any non-HTTPS URL.
+- The installer runs silently, then the app starts again. The settings, the engine and the models stay where
+  they are.
+- No GitHub API and no tokens are involved.
+
+To publish an update, upload Setup-x.y.z.exe and update.json to /lyricist-sync/ on ax-easy.com
+
+CI writes `update.json` next to the installer, with the real SHA256 and size (`tools/make_update_json.py`). Its
+fields are:
+
+```json
+{"version": "1.1.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.1.0.exe",
+ "sha256": "…", "size": 52000000, "minimum_os": "10.0.17763"}
+```
+
+### Window style
+
+- **Windows 11** (build 22000 or newer): DWM rounded corners and Mica.
+- **Windows 10**: a frameless translucent window. The app paints its own rounded glass (16 px radius, gradient,
+  grain and a top highlight) and a soft shadow in a 20 px transparent margin. There is no window-wide acrylic,
+  which Windows 10 renders slowly.
+- Maximized windows drop the margin.
+- Snap, drag and resize work as usual; resizing grabs the visible edge.
+- `--force-win10-style` shows the Windows 10 look on Windows 11. CI uses it for screenshots.
+
 ### Command line
 
 `LyricistSync.exe` also runs without the GUI:
@@ -63,16 +113,33 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 LyricistSync.exe --setup [--variant auto|cuda|cpu]       first-run download without the GUI
 LyricistSync.exe --sync song1.mp3 song2.flac [--out DIR] [--formats ttml,lrc,srt,vtt] [--bom] [--lang el]
 LyricistSync.exe --selftest --report selftest.json      checks GUI, exporters and packaging (no models)
-LyricistSync.exe --screens DIR                           renders screenshots
+LyricistSync.exe --screens DIR                           renders screenshots (both window paths, labelled)
+LyricistSync.exe --setup-gui [--auto --report r.json --shots DIR]   setup window on its own (CI latency test)
+LyricistSync.exe --update-test URL [--install]           updater end-to-end test against a local manifest
+LyricistSync.exe --force-win10-style                     use the Windows 10 window style on any Windows
 ```
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Setup-1.0.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Setup-1.1.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
-- On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync` and shows a progress
-  window that you can pause and resume. Every file is SHA256-checked, and an interrupted download resumes where it
-  stopped (HTTP Range).
+- On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`. Every file is
+  SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
+  1. Download PyTorch and the packages
+  2. Install
+  3. Demucs model
+  4. Whisper model
+  5. MMS model
+  6. Verify (SHA256)
+  7. GPU check / warm-up
+
+  Each step has its own progress bar with MB, speed and time left. The window also has:
+  - an overall bar with elapsed and remaining time;
+  - a live log and "Open log folder";
+  - **Pause/Resume**, **Cancel** (asks first) and **Retry step**.
+
+  If a step is quiet for 60 s, a "still working…" notice appears with the elapsed time. The next start resumes at
+  the first unfinished step.
 
 | Build | What is downloaded | Size |
 |---|---|---|
@@ -116,17 +183,34 @@ Azure subscription is stopped). Windows SmartScreen will therefore warn: *"Windo
 
 GitHub Actions (`.github/workflows/build.yml`) does the build on a `windows-latest` runner:
 
-1. Runs the unit tests.
-2. Builds `LyricistSync.exe` with PyInstaller.
-3. Runs `--selftest` on the frozen app: GUI, footer links, exporters, the native window frame and the QtMultimedia
-   backend.
-4. Renders screenshots.
-5. Builds the Inno Setup installer.
-6. Installs it silently, self-tests the installed copy, and uninstalls it.
-7. Uploads the installer with its `.sha256`.
+1. Runs the unit tests: exporters, repeats, downloader and timing.
+2. Builds `LyricistSync.exe` with PyInstaller on Python 3.12.
+3. Runs `--selftest` on the frozen app. It runs twice, once normally and once with `--force-win10-style`, and covers:
+   - the GUI, footer links and exporters;
+   - save modes, overwrite prompts and per-song folders;
+   - confidence markers and re-sync;
+   - the updater, against a local HTTP server;
+   - the painted frame and native hit-tests;
+   - QtMultimedia.
+4. Renders labelled screenshots of both window paths.
+5. Builds the Inno Setup installer and `update.json`.
+6. Installs the build silently, self-tests the installed copy, and uninstalls it.
+7. Runs the updater end to end. A local server offers a fake newer version that points at the freshly built
+   installer. The test checks that:
+   - the popup finds it;
+   - the download and SHA256 check pass;
+   - the silent install runs and keeps the user data;
+   - a wrong hash is refused;
+   - a 404 shows the friendly message.
+8. Uploads the installer with its `.sha256` and `update.json`.
 
-The `e2e` job then installs the artifact on a clean runner, runs the real first-run setup (CPU build), and syncs the
-English and Greek demo songs, checking them against their known line times.
+The `e2e` job then runs on a clean runner:
+1. Installs the artifact.
+2. Runs the first-run setup in its GUI window (CPU build). The files come from a throttled local mirror, and the
+   job checks that the event loop stays responsive: under 200 ms per step. It also takes mid-way screenshots in
+   both themes.
+3. Syncs the English and Greek demos plus the hard fixtures: a long intro, an intro with a hummed "ohhh", vocal
+   bleed and a choir. Each is checked against its known line times.
 
 Layout:
 
@@ -135,7 +219,8 @@ app/lyricist_sync/   GUI (PySide6, frameless liquid-glass window), bootstrap/dow
 engine/              lyricist_engine.py: runs in the downloaded Python (Demucs → Whisper → MMS_FA)
 installer/           Inno Setup script, icon, version info
 tools/               manifest generator and the Windows lock file for the engine
-tests/               exporter parity, repeat detection, downloader, demo fixtures with known times
+tests/               exporter parity, repeat detection, downloader, timing, demo + hard fixtures with known times
+CHANGELOG.md         release notes (also used for update.json)
 ```
 
 © 2026 Ax-Easy. All rights reserved.

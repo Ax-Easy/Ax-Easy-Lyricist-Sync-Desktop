@@ -6,15 +6,19 @@
    "start": 3.982,
    "end": 5.122,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 1,
    "text": "Ο ήλιος ανατέλλει πάλι 🌅",
-   "start": 6.263,
+   "start": 6.283,
    "end": 7.644,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 0.94,
+   "why": []
   },
   {
    "idx": 2,
@@ -22,7 +26,9 @@
    "start": 8.764,
    "end": 10.665,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 0.88,
+   "why": []
   },
   {
    "idx": 3,
@@ -30,26 +36,31 @@
    "start": 11.845,
    "end": 14.147,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 0.88,
+   "why": []
   }
  ],
  "duration": 17.188,
  "language": "el",
  "repeats": [],
  "device": "cpu",
+ "stem": "htdemucs",
+ "low_conf": 0,
+ "version": 2,
  "timings": {
-  "decode": 0.14,
-  "separate": 6.57,
-  "transcribe": 9.52,
-  "align": 4.11,
-  "total": 20.35
+  "decode": 0.12,
+  "separate": 6.41,
+  "transcribe": 8.02,
+  "emissions": 5.23,
+  "align": 2.8,
+  "total": 22.58
  },
  "transcript": [
   {
-   "start": 3.3200000000000003,
-   "end": 14.04,
-   "text": " Καλίσπερα κόσμαι. Ο Ιωσάννα τελειπάλι. Τα λοια βρεις κουντωνρηθμότους. Συγματ' αγαπώ σαν το πρωτοφός."
+   "start": 3.2600000000000007,
+   "end": 14.1,
+   "text": " Καλίσπερα κόσμε! Ο Ιωσάννα τελειπάλι! Τα λοια βρεις κουντωνρηθμότους! Συγματά για πόσα ντοπρότοφος!"
   }
- ],
- "device_name": "CPU"
+ ]
 }

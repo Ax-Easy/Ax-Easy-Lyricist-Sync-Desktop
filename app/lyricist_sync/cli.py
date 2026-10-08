@@ -40,8 +40,29 @@ def main(argv=None):
     ap.add_argument('--out', metavar='DIR', help='output folder (default: next to the audio)')
     ap.add_argument('--formats', default='ttml,lrc,srt,vtt')
     ap.add_argument('--bom', action='store_true', help='UTF-8 BOM in .srt')
-    ap.add_argument('--report', metavar='JSON', help='write a JSON report (selftest/sync)')
+    ap.add_argument('--report', metavar='JSON', help='write a JSON report (selftest/sync/setup-gui/update-test)')
+    ap.add_argument('--force-win10-style', action='store_true',
+                    help='use the Windows 10 window path (painted glass + painted shadow) on any Windows')
+    ap.add_argument('--setup-gui', action='store_true', help='run the setup window by itself (with --auto: start it, '
+                    'measure event-loop latency, close when done)')
+    ap.add_argument('--auto', action='store_true')
+    ap.add_argument('--shots', metavar='DIR', help='with --setup-gui: screenshots of the setup window midway (dark+light)')
+    ap.add_argument('--update-test', metavar='URL', help='check/download/verify an update from URL (CI test); '
+                    'with --install also run the installer silently')
+    ap.add_argument('--install', action='store_true')
     a = ap.parse_args(argv[1:])
+    if a.force_win10_style:
+        os.environ['LYRICIST_SYNC_FORCE_WIN10'] = '1'
+        from . import chrome
+        chrome.force_win10(True)
+    if a.setup_gui:
+        _console()
+        from .setup_test import run_setup_gui
+        return _hard_exit(run_setup_gui(a.variant, a.auto, a.report, a.shots))
+    if a.update_test:
+        _console()
+        from .setup_test import run_update_test
+        return _hard_exit(run_update_test(a.update_test, a.install, a.report))
     headless = a.version or a.selftest or a.screens or a.setup or a.sync
     if not headless:
         from .app import run_gui
@@ -88,6 +109,7 @@ def cli_setup(variant):
 
     t0 = time.time()
     st = bootstrap.Setup(v, on_progress=prog, on_status=lambda s: print(s, flush=True), on_log=lambda s: print(s, flush=True)).run()
+    st = st or bootstrap.state() or {}
     print('Setup finished in %.0f s: %s' % (time.time() - t0, json.dumps(st.get('engine'))), flush=True)
     return 0
 
@@ -96,7 +118,7 @@ def cli_sync(a):
     from . import bootstrap, paths
     from .formats import decode_text
     from .lyrics import resolve_lang, sidecar_lyrics, split_lines
-    from .window import export_song, read_tags
+    from .export import export_song, read_tags
     if not bootstrap.is_ready():
         print('The engine is not set up. Run LyricistSync --setup first (or start the app once).')
         return 2

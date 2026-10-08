@@ -6,7 +6,9 @@
    "start": 3.985,
    "end": 5.828,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 1,
@@ -14,15 +16,19 @@
    "start": 7.009,
    "end": 9.072,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 2,
    "text": "Hold the line, hold the line tonight",
-   "start": 10.233,
+   "start": 10.253,
    "end": 13.097,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 3,
@@ -30,7 +36,9 @@
    "start": 14.279,
    "end": 16.401,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 4,
@@ -38,7 +46,9 @@
    "start": 17.603,
    "end": 19.686,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 5,
@@ -46,7 +56,9 @@
    "start": 20.867,
    "end": 22.77,
    "repeat": false,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 2,
@@ -54,7 +66,9 @@
    "start": 23.951,
    "end": 26.775,
    "repeat": true,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   },
   {
    "idx": 3,
@@ -62,7 +76,9 @@
    "start": 27.956,
    "end": 30.059,
    "repeat": true,
-   "flag": ""
+   "flag": "",
+   "conf": 1.0,
+   "why": []
   }
  ],
  "duration": 33.103,
@@ -78,17 +94,21 @@
   }
  ],
  "device": "cpu",
+ "stem": "htdemucs",
+ "low_conf": 0,
+ "version": 2,
  "timings": {
-  "decode": 0.23,
-  "separate": 12.95,
-  "transcribe": 9.07,
-  "align": 6.89,
-  "total": 29.13
+  "decode": 0.27,
+  "separate": 12.22,
+  "transcribe": 11.84,
+  "emissions": 6.9,
+  "align": 0.02,
+  "total": 31.26
  },
  "transcript": [
   {
-   "start": 3.599999999999998,
-   "end": 5.84,
+   "start": 3.5999999999999996,
+   "end": 5.86,
    "text": " Last hours glowing in the rain."
   },
   {
@@ -102,12 +122,12 @@
    "text": " Hold the line, hold the line tonight."
   },
   {
-   "start": 13.88,
+   "start": 13.9,
    "end": 16.32,
    "text": " Every word will find its time."
   },
   {
-   "start": 17.18,
+   "start": 17.32,
    "end": 19.56,
    "text": " Silent signals crossing over."
   },
@@ -118,14 +138,13 @@
   },
   {
    "start": 23.66,
-   "end": 26.56,
+   "end": 26.54,
    "text": " Hold the line, hold the line tonight."
   },
   {
-   "start": 26.56,
+   "start": 26.54,
    "end": 29.92,
    "text": " it. Every word will find its time."
   }
- ],
- "device_name": "CPU"
+ ]
 }

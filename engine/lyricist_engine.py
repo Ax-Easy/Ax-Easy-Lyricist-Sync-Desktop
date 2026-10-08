@@ -68,13 +68,14 @@ def _word_cost(a, b, cache={}):
     return cache[k]
 
 
-def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3):
+def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3, with_anchors=False):
     """Sung order of the lyric lines, found by aligning the free transcript to the lyrics
     with a DP that may jump back to an earlier line start at a line end (cost jump_cost).
     A jump means the singer repeated lines that are written only once (e.g. a chorus).
     Lines Whisper did not hear stay in their written place. Extra transcript words
     (intro ad-libs, hallucinations) cost the same on every path, so they don't bias it.
-    Returns (sung order as line indices, list of repeats)."""
+    Returns (sung order as line indices, list of repeats) and, with with_anchors, for every
+    sung line the Whisper words matched to it: [(word index in line, start, end, cost)]."""
     L, owner = [], []
     for k, ws in enumerate(line_words):
         for w in ws:
@@ -82,7 +83,7 @@ def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3):
     n, m = len(L), len(transcript_words)
     nlines = len(line_words)
     if not n or not m:
-        return list(range(nlines)), []
+        return (list(range(nlines)), [], [[] for _ in range(nlines)]) if with_anchors else (list(range(nlines)), [])
     starts = {}
     for i, k in enumerate(owner):
         starts.setdefault(k, i)
@@ -151,7 +152,7 @@ def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3):
         path.append((pj, pi, op))
         j, i = pj, pi
     path.reverse()
-    seq, repeats = [], []
+    seq, repeats, anchors = [], [], []
     last_line = None
     for pj, pi, op in path:
         if op == 'jump':
@@ -162,12 +163,16 @@ def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3):
         if op in ('match', 'del') and pi < n:
             k = owner[pi]
             if k != last_line:
-                seq.append(k); last_line = k
+                seq.append(k); anchors.append([]); last_line = k
+            if op == 'match':
+                c = _word_cost(T[pj], L[pi])
+                if c <= 0.75:
+                    anchors[-1].append((pi - starts[k], transcript_words[pj][1], transcript_words[pj][2], c))
     # lines without words never appear in the path: keep them in written order
     for k in range(nlines):
         if k not in seq:
             pos = next((x for x, v in enumerate(seq) if v > k), len(seq))
-            seq.insert(pos, k)
+            seq.insert(pos, k); anchors.insert(pos, [])
     for r in repeats:
         r['ratio'] = None
     # describe each repeat as the block of lines sung again
@@ -184,6 +189,8 @@ def expand_repeats(line_words, transcript_words, jump_cost=4.0, min_words=3):
     for r, rr in zip(out_rep, repeats + [{}] * len(out_rep)):
         r['time'] = rr.get('time')
         r.pop('end_pos')
+    if with_anchors:
+        return seq, out_rep, anchors
     return seq, out_rep
 
 
@@ -226,11 +233,21 @@ class _TqdmModule:
 
 
 # ---------------------------------------------------------------- engine
+import timing as TM  # noqa: E402  (engine/timing.py next to this script)
+
+STEMS = {  # vocal separation models: name -> (yaml models line, weights file)
+    'htdemucs': ("models: ['955717e8']\n", '955717e8-8726e21a.th'),
+    'htdemucs_ft': ("models: ['04573f0d']\n", '04573f0d-f3cf25b2.th'),  # the vocals model of htdemucs_ft
+}
+CACHE_VERSION = 2
+
+
 class Engine:
-    def __init__(self, models, device='auto'):
+    def __init__(self, models, device='auto', cache=None):
         import torch
         self.torch = torch
         self.models = models
+        self.cache = cache or os.path.join(os.path.dirname(os.path.abspath(models)), 'cache')
         os.environ.setdefault('TORCH_HOME', os.path.join(models, 'torch'))
         if device == 'auto':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -240,12 +257,22 @@ class Engine:
         self.device = device
         if device == 'cpu':
             torch.set_num_threads(max(1, os.cpu_count() or 1))
+        self.stem = self._pick_stem()
         self._demucs = self._whisper = self._mms = None
+
+    def _pick_stem(self):
+        """htdemucs by default. The htdemucs_ft vocals model was evaluated for 1.1.0 (choir and
+        backing-vocal fixtures, Stoned) and gave no measurable gain, so it is opt-in only:
+        LYRICIST_SYNC_STEM=htdemucs_ft with its weights placed in models/demucs."""
+        want = os.environ.get('LYRICIST_SYNC_STEM', 'htdemucs')
+        if want in STEMS and os.path.exists(os.path.join(self.models, 'demucs', STEMS[want][1])):
+            return want
+        return 'htdemucs'
 
     def info(self):
         t = self.torch
         name = t.cuda.get_device_name(0) if self.device == 'cuda' else (platform_cpu() or 'CPU')
-        return {'device': self.device, 'device_name': name, 'torch': t.__version__,
+        return {'device': self.device, 'device_name': name, 'torch': t.__version__, 'stem': self.stem,
                 'cuda': t.version.cuda if self.device == 'cuda' else None,
                 'vram_gb': round(t.cuda.get_device_properties(0).total_memory / 2**30, 1) if self.device == 'cuda' else None}
 
@@ -255,11 +282,11 @@ class Engine:
             from pathlib import Path
             from demucs.pretrained import get_model
             d = os.path.join(self.models, 'demucs')
-            y = os.path.join(d, 'htdemucs.yaml')
+            y = os.path.join(d, self.stem + '.yaml')
             if not os.path.exists(y):
                 with open(y, 'w') as f:
-                    f.write("models: ['955717e8']\n")
-            m = get_model('htdemucs', repo=Path(d))
+                    f.write(STEMS[self.stem][0])
+            m = get_model(self.stem, repo=Path(d))
             self._demucs = m.to(self.device).eval()
         return self._demucs
 
@@ -273,7 +300,8 @@ class Engine:
         if self._mms is None:
             import torchaudio
             b = torchaudio.pipelines.MMS_FA
-            self._mms = (b, b.get_model(with_star=False).to(self.device).eval(), b.get_tokenizer(), b.get_aligner())
+            vocab = b.get_dict(star='*')
+            self._mms = (b, b.get_model(with_star=True).to(self.device).eval(), vocab, vocab['*'])
         return self._mms
 
     # -- steps
@@ -322,10 +350,10 @@ class Engine:
         words = [(w['word'], round(w['start'], 2), round(w['end'], 2)) for s in r['segments'] for w in s.get('words', [])]
         return words, r.get('language'), [{'start': s['start'], 'end': s['end'], 'text': s['text']} for s in r['segments']]
 
-    def align(self, vocals16, sung_words, cb):
-        """MMS_FA on 16 kHz mono vocals; emissions in 30 s chunks with 2 s context."""
+    def emissions(self, vocals16, cb):
+        """MMS_FA log-probs [frames, vocab+star] on 16 kHz mono vocals, 30 s chunks with 2 s context."""
         torch = self.torch
-        bundle, model, tokenizer, aligner = self.mms()
+        bundle, model, _vocab, _star = self.mms()
         SR = bundle.sample_rate
         wav = vocals16[None]
         chunk, ctx = 30 * SR, 2 * SR
@@ -339,51 +367,69 @@ class Engine:
                 fps = em.shape[1] / ((b - a) / SR)
                 s_off = round((pos - a) / SR * fps)
                 e_off = s_off + round((min(n, pos + chunk) - pos) / SR * fps)
-                ems.append(em[:, s_off:e_off].float().cpu())
+                ems.append(em[0, s_off:e_off].float().cpu())
                 pos += chunk
-                cb(min(1.0, pos / n) * 0.9)
-        emission = torch.cat(ems, 1)
-        frame_sec = (n / SR) / emission.shape[1]
-        words = [w for ws in sung_words for w in ws]
-        if not words:
-            raise RuntimeError('No alignable words in the lyrics.')
-        spans = aligner(emission[0], tokenizer(words))
-        cb(1.0)
-        res, k = [], 0
-        for ws in sung_words:
-            sp = spans[k:k + len(ws)]
-            k += len(ws)
-            if sp:
-                res.append((sp[0][0].start * frame_sec, sp[-1][-1].end * frame_sec,
-                            [(w, s[0].start * frame_sec, s[-1].end * frame_sec) for w, s in zip(ws, sp)]))
-            else:
-                res.append(None)
-        return res
+                cb(min(1.0, pos / n))
+        emission = torch.cat(ems, 0)
+        return emission, (n / SR) / emission.shape[0]
 
-    # -- full job
-    def sync(self, job, progress):
+    # -- analysis cache (emissions + vocal activity + transcript), so 'Re-sync from this line' is instant
+    def _key(self, path):
+        import hashlib
+        st = os.stat(path)
+        k = '%s|%d|%d|%s|%d' % (os.path.abspath(path), st.st_size, int(st.st_mtime), self.stem, CACHE_VERSION)
+        return hashlib.sha1(k.encode('utf-8')).hexdigest()[:20]
+
+    def save_analysis(self, path, an):
+        import numpy as np
+        try:
+            os.makedirs(self.cache, exist_ok=True)
+            f = os.path.join(self.cache, self._key(path) + '.npz')
+            np.savez_compressed(f + '.tmp.npz', em=an['em'].numpy().astype('float16'), fs=an['fs'], db=an['vad'].db,
+                                duration=an['duration'], words=json.dumps(an.get('words') or [], ensure_ascii=False))
+            os.replace(f + '.tmp.npz', f)
+            files = sorted((os.path.join(self.cache, x) for x in os.listdir(self.cache) if x.endswith('.npz')),
+                           key=os.path.getmtime, reverse=True)
+            for old in files[40:]:
+                os.remove(old)
+        except OSError as e:
+            log('cache not written: %s' % e)
+
+    def load_analysis(self, path):
+        import numpy as np
+        f = os.path.join(self.cache, self._key(path) + '.npz')
+        if not os.path.exists(f):
+            return None
+        try:
+            d = np.load(f)
+            return {'em': self.torch.from_numpy(d['em'].astype('float32')), 'fs': float(d['fs']),
+                    'vad': TM.Vad(db=d['db']), 'duration': float(d['duration']),
+                    'words': [tuple(w) for w in json.loads(str(d['words']))]}
+        except Exception as e:  # corrupt cache: recompute
+            log('cache unreadable (%s); recomputing' % e)
+            return None
+
+    def analyse(self, path, lang, progress, transcript=True):
+        """decode -> vocals -> (Whisper words) -> emissions + vocal activity."""
         t = {}
         T0 = time.time()
-        lines = [l for l in job['lines'] if l.strip()]
-        if not lines:
-            raise RuntimeError('No lyrics lines.')
-        iso = job.get('iso') or ''
         stage_w = {'decode': (0.0, 0.03), 'separate': (0.03, 0.55), 'transcribe': (0.55, 0.85), 'align': (0.85, 1.0)}
+        if not transcript:
+            stage_w = {'decode': (0.0, 0.04), 'separate': (0.04, 0.85), 'align': (0.85, 1.0)}
 
         def stage(name):
             a, b = stage_w[name]
             progress(name, a)
             return lambda f: progress(name, a + (b - a) * f)
 
-        cb = stage('decode')
+        stage('decode')
         import torchaudio.functional as AF
         model_sr = 44100
-        wav = self.decode(job['audio'], model_sr)
+        wav = self.decode(path, model_sr)
         duration = wav.shape[1] / model_sr
         t['decode'] = time.time() - T0
         if duration < 1:
             raise RuntimeError('Audio is empty or too short.')
-
         t1 = time.time()
         vocals = self.separate(wav, stage('separate'))
         del wav
@@ -392,44 +438,131 @@ class Engine:
         if self.device == 'cuda':
             self.torch.cuda.empty_cache()
         t['separate'] = time.time() - t1
-
+        words, wlang, segments = [], lang, []
+        if transcript:
+            t1 = time.time()
+            words, wlang, segments = self.transcribe(v16, lang, stage('transcribe'))
+            t['transcribe'] = time.time() - t1
         t1 = time.time()
-        rom_lines = romanize(lines, iso)
-        line_words = [ctc_words(r) for r in rom_lines]
-        repeats, seq, lang = [], list(range(len(lines))), job.get('lang')
-        segments = []
-        if job.get('repeats', True):
-            words, lang, segments = self.transcribe(v16, job.get('lang'), stage('transcribe'))
-            tw_text = romanize([w for w, s, e in words], iso)
-            tw = [(x, s, e) for (w, s, e), r in zip(words, tw_text) for x in ctc_words(r)]
-            seq, repeats = expand_repeats(line_words, tw)
-            for r in repeats:
-                log('repeat found: lines %s sung again (at ~%ss)' % ([i + 1 for i in r['lines']], r['time']))
-        t['transcribe'] = time.time() - t1
+        cb = stage('align')
+        em, fs = self.emissions(v16, lambda f: cb(0.8 * f))
+        vad = TM.Vad(v16.numpy())
+        t['emissions'] = time.time() - t1
+        an = {'em': em, 'fs': fs, 'vad': vad, 'duration': duration, 'words': words, 'language': wlang,
+              'segments': segments, 'timings': t, 'align_cb': cb}
+        return an
 
-        t1 = time.time()
-        al = self.align(v16, [line_words[i] for i in seq], stage('align'))
-        t['align'] = time.time() - t1
+    def _occ_words(self, texts, iso):
+        return [ctc_words(r) for r in romanize(texts, iso)]
 
-        # Lines without alignable words (e.g. only digits): place them between their neighbours.
+    def _finish(self, occ, occ_texts, seq, an, anchors, have_transcript, first=0):
+        """occ (aligned dicts) -> result lines with flags and confidence."""
         out = []
-        for k, i in enumerate(seq):
-            a = al[k]
-            out.append({'idx': i, 'text': lines[i], 'start': a[0] if a else None, 'end': a[1] if a else None,
-                        'repeat': seq.index(i) != k})
-        for k, o in enumerate(out):
+        duration = an['duration']
+        for k, o in enumerate(occ):
+            if o is None:
+                out.append({'idx': seq[k], 'text': occ_texts[k], 'start': None, 'end': None})
+                continue
+            out.append({'idx': seq[k], 'text': occ_texts[k], 'start': o['start'], 'end': o['end'], '_o': o})
+        for k, o in enumerate(out):  # lines without alignable words: place them between their neighbours
             if o['start'] is None:
                 prev_end = next((out[j]['end'] for j in range(k - 1, -1, -1) if out[j]['end'] is not None), 0.0)
                 nxt = next((out[j]['start'] for j in range(k + 1, len(out)) if out[j]['start'] is not None), duration)
                 o['start'], o['end'], o['guessed'] = prev_end, max(prev_end, min(nxt, prev_end + 2.0)), True
-        for o in out:
+        for k, o in enumerate(out):
+            o['repeat'] = seq.index(seq[k]) != k
             dur = o['end'] - o['start']
             nw = max(1, len(o['text'].split()))
             o['flag'] = ('too long' if dur > max(8.0, nw * 1.2) else 'too short' if dur < 0.25 + 0.08 * nw else '')
+            al = o.pop('_o', None)
+            if al is not None:
+                conf, why = TM.confidence(al, al['words'] and [None] * len(al['words']) or [], an['vad'],
+                                          anchors[k] if anchors and k < len(anchors) else [], have_transcript)
+                o['conf'], o['why'] = conf, why
+            else:
+                o['conf'], o['why'] = 0.0, ['no alignable words (placed between neighbours)']
             o['start'], o['end'] = round(o['start'], 3), round(o['end'], 3)
+        return out
+
+    # -- full job
+    def sync(self, job, progress):
+        T0 = time.time()
+        lines = [l for l in job['lines'] if l.strip()]
+        if not lines:
+            raise RuntimeError('No lyrics lines.')
+        iso = job.get('iso') or ''
+        an = self.analyse(job['audio'], job.get('lang'), progress, transcript=job.get('repeats', True))
+        t = an['timings']
+        t1 = time.time()
+        line_words = self._occ_words(lines, iso)
+        seq, repeats, anchors = list(range(len(lines))), [], None
+        have_tr = bool(an['words'])
+        if have_tr:
+            tw_text = romanize([w for w, s, e in an['words']], iso)
+            tw = [(x, s, e) for (w, s, e), r in zip(an['words'], tw_text) for x in ctc_words(r)]
+            seq, repeats, anchors = expand_repeats(line_words, tw, with_anchors=True)
+            for r in repeats:
+                log('repeat found: lines %s sung again (at ~%ss)' % ([i + 1 for i in r['lines']], r['time']))
+        occ_words = [line_words[i] for i in seq]
+        if not any(occ_words):
+            raise RuntimeError('No alignable words in the lyrics.')
+        _b, _m, vocab, star = self.mms()
+        em, fs = an['em'], an['fs']
+        occ = TM.align_window(em, fs, occ_words, 0, em.shape[0], vocab, star)
+        if occ is None:
+            raise RuntimeError('The song is too short for these lyrics.')
+        TM.refine(occ, occ_words, em, fs, an['vad'], anchors, an['duration'], vocab, star, log=log)
+        TM.monotonic(occ, an['duration'])
+        an['align_cb'](1.0)
+        out = self._finish(occ, [lines[i] for i in seq], seq, an, anchors, have_tr)
+        t['align'] = time.time() - t1
+        self.save_analysis(job['audio'], an)
         t['total'] = time.time() - T0
-        return {'lines': out, 'duration': round(duration, 3), 'language': lang, 'repeats': repeats,
-                'device': self.device, 'timings': {k: round(v, 2) for k, v in t.items()}, 'transcript': segments}
+        low = sum(1 for o in out if o.get('conf', 1) < TM.LOW_CONF)
+        return {'lines': out, 'duration': round(an['duration'], 3), 'language': an['language'], 'repeats': repeats,
+                'device': self.device, 'stem': self.stem, 'low_conf': low, 'version': 2,
+                'timings': {k: round(v, 2) for k, v in t.items()}, 'transcript': an['segments']}
+
+    def resync(self, job, progress):
+        """Re-align only the lines after job['from'], anchored at job['anchor'] (seconds) for
+        that line. job['lines'] = the sung lines in order (texts), job['idx'] their lyric indices."""
+        T0 = time.time()
+        texts = job['lines']
+        k0 = int(job['from'])
+        anchor = float(job['anchor'])
+        iso = job.get('iso') or ''
+        an = self.load_analysis(job['audio'])
+        if an is None:
+            an = self.analyse(job['audio'], job.get('lang'), progress, transcript=False)
+            self.save_analysis(job['audio'], an)
+        progress('align', 0.9)
+        occ_words = self._occ_words(texts, iso)
+        _b, _m, vocab, star = self.mms() if self._mms else (None, None, *self._vocab())
+        em, fs = an['em'], an['fs']
+        f0 = max(0, int(anchor / fs) - 1)
+        part = TM.align_window(em, fs, occ_words[k0:], f0, em.shape[0], vocab, star, lead=False)
+        if part is None:
+            raise RuntimeError('Not enough audio after %.2f s for the remaining lines.' % anchor)
+        if part[0] is not None:
+            part[0]['start'] = anchor
+            part[0]['fix'] = ['manual']
+        occ = [None] * k0 + part
+        # earlier lines are fixed; give refine/monotonic their times as context
+        prev = [{'start': s, 'end': e, 'words': [], 'score': 1.0} for s, e in zip(job.get('starts', [])[:k0], job.get('ends', [])[:k0])]
+        occ[:k0] = prev + [None] * (k0 - len(prev))
+        TM.refine(occ, occ_words, em, fs, an['vad'], None, an['duration'], vocab, star, first=k0 + 1, log=log)
+        if occ[k0]:
+            occ[k0]['start'] = anchor
+        TM.monotonic(occ, an['duration'], first=k0 + 1)
+        seq = list(job.get('idx') or range(len(texts)))
+        out = self._finish(occ, texts, seq, an, None, False)
+        progress('align', 1.0)
+        return {'from': k0, 'lines': out[k0:], 'timings': {'total': round(time.time() - T0, 2)}}
+
+    def _vocab(self):
+        import torchaudio
+        v = torchaudio.pipelines.MMS_FA.get_dict(star='*')
+        return v, v['*']
 
 
 def platform_cpu():
@@ -447,13 +580,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--models', required=True)
     ap.add_argument('--device', default='auto')
+    ap.add_argument('--cache', default=None)
     ap.add_argument('cmd', choices=['serve', 'check', 'sync'])
     ap.add_argument('args', nargs='*')
     a = ap.parse_args()
     os.environ['TORCH_HOME'] = os.path.join(a.models, 'torch')
     os.environ.setdefault('HF_HUB_OFFLINE', '1')
     try:
-        eng = Engine(a.models, a.device)
+        eng = Engine(a.models, a.device, a.cache)
     except Exception as e:
         emit(event='error', error='Engine failed to start: %s' % e, trace=traceback.format_exc())
         return 2
@@ -485,8 +619,9 @@ def main():
             break
         jid = job.get('id')
         try:
-            res = eng.sync(job, lambda s, f, jid=jid: emit(event='progress', id=jid, stage=s, pct=round(f, 3)))
-            emit(event='result', id=jid, result=res)
+            fn = eng.resync if job.get('cmd') == 'resync' else eng.sync
+            res = fn(job, lambda s, f, jid=jid: emit(event='progress', id=jid, stage=s, pct=round(f, 3)))
+            emit(event='result', id=jid, result=res, cmd=job.get('cmd', 'sync'))
         except Exception as e:  # report and keep serving the queue
             emit(event='error', id=jid, error=str(e) or e.__class__.__name__, trace=traceback.format_exc())
             if eng.device == 'cuda':

@@ -23,16 +23,19 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # the GUI is built on 3.12: on 3.11, PySide6 6.12 decrements None's refcount on every void call and the
+          # app aborts after enough repaints (the 1.0.0 setup window "froze" halfway); the engine stays on 3.11
+          python-version: "3.12"
 
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
 
-      - name: Unit tests (exporters vs Lyricist 1.1.0 formats.js, repeat detection, downloader)
+      - name: Unit tests (exporters vs Lyricist 1.1.0 formats.js, repeat detection, downloader, updater/export helpers)
         run: |
           node --version
+          pip install numpy   # test-only (engine/timing.py); excluded from the PyInstaller bundle
           python tests/test_formats.py -v
           python tests/test_repeats.py -v
           python tests/test_bootstrap.py -v
@@ -43,14 +46,21 @@ jobs:
       - name: PyInstaller
         run: pyinstaller LyricistSync.spec --noconfirm --clean
 
-      - name: Self-test the frozen app (GUI loads, footer, exporters, native frame)
+      - name: Self-test the frozen app (GUI, footer, exporters, save modes, conflicts, re-sync, updater, frame)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--selftest','--report','selftest.json' -Wait -PassThru -NoNewWindow
           Get-Content selftest.json
           if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
 
-      - name: Screenshots (before/after sync with the demo fixtures)
+      - name: Self-test with --force-win10-style (painted glass + shadow margin, hit-tests on the visible edge)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--selftest','--force-win10-style','--report','selftest-win10.json' -Wait -PassThru -NoNewWindow
+          Get-Content selftest-win10.json
+          if ($p.ExitCode -ne 0) { throw "selftest (win10 style) failed: $($p.ExitCode)" }
+
+      - name: Screenshots (both window paths, labelled; Windows 10 path over a wallpaper and a checkerboard)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--screens','screens-ci','--fixture','tests\fixtures' -Wait -PassThru -NoNewWindow
@@ -68,6 +78,8 @@ jobs:
           $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
           "$h  $($f.Name)" | Out-File -Encoding ascii "$($f.FullName).sha256"
           "Installer: $($f.Name) $($f.Length) bytes sha256=$h"
+          python tools/make_update_json.py $f.FullName --out dist-installer\update.json
+          if ($LASTEXITCODE -ne 0) { throw "update.json failed" }
 
       - name: Silent install, self-test the installed app, silent uninstall
         shell: pwsh
@@ -86,12 +98,52 @@ jobs:
           if (Test-Path "$dir\LyricistSync.exe") { throw "uninstall left the app behind" }
           "install/selftest/uninstall OK"
 
+      - name: In-app updater end to end (local server offers a fake 9.9.9 = this installer)
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem dist-installer\*.exe | Select-Object -First 1
+          $dir = "$env:RUNNER_TEMP\lsync-upd"
+          $p = Start-Process $f.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER',"/DIR=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install failed" }
+          # user data that an update must keep
+          $h = "$env:LOCALAPPDATA\Ax-Easy\LyricistSync"
+          New-Item -ItemType Directory -Force "$h\models","$h\runtime" | Out-Null
+          'keep' | Out-File "$h\models\keep.txt"; 'keep' | Out-File "$h\runtime\keep.txt"
+          '{"save_mode": "folder", "out_dir": "C:\\Lyrics", "update_check": true}' | Out-File -Encoding utf8 "$h\settings.json"
+          New-Item -ItemType Directory -Force www | Out-Null
+          Copy-Item $f.FullName www\
+          python tools/make_update_json.py "www\$($f.Name)" --version 9.9.9 --notes "- CI test release" --base http://127.0.0.1:8766/ --out www\update.json
+          $srv = Start-Process python -ArgumentList 'tools/serve_throttled.py','www','--port','8766','--rate','40' -PassThru -NoNewWindow
+          Start-Sleep 2
+          $env:LYRICIST_SYNC_UPDATE_TEST = '1'
+          $p = Start-Process "$dir\LyricistSync.exe" -ArgumentList '--update-test','http://127.0.0.1:8766/update.json','--install','--report','update-test.json' -Wait -PassThru -NoNewWindow
+          Get-Content update-test.json
+          if ($p.ExitCode -ne 0) { throw "update test failed" }
+          # the app started the installer (/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS) and quit
+          $deadline = (Get-Date).AddMinutes(5)
+          while (-not ((Test-Path update-install.log) -and (Select-String -Path update-install.log -Pattern 'Installation process succeeded' -Quiet))) {
+            if ((Get-Date) -gt $deadline) { if (Test-Path update-install.log) { Get-Content update-install.log -Tail 40 }; throw "silent update install did not finish" }
+            Start-Sleep 2
+          }
+          Start-Sleep 3
+          Select-String -Path update-install.log -Pattern 'Parameters|succeeded|Log closed' | ForEach-Object { $_.Line }
+          if (-not (Test-Path "$h\models\keep.txt") -or -not (Test-Path "$h\runtime\keep.txt")) { throw "update removed user data" }
+          $s = Get-Content "$h\settings.json" -Raw | ConvertFrom-Json
+          if ($s.save_mode -ne 'folder') { throw "update lost the settings" }
+          $v = & "$dir\LyricistSync.exe" --version | Out-String
+          "installed after update: $v"
+          Stop-Process -Id $srv.Id -Force
+          $p = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait -PassThru
+          Remove-Item -Recurse -Force $h -ErrorAction SilentlyContinue
+          "updater e2e OK"
+
       - uses: actions/upload-artifact@v4
         with:
           name: installer
           path: |
             dist-installer/*.exe
             dist-installer/*.sha256
+            dist-installer/update.json
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
@@ -103,11 +155,13 @@ jobs:
           path: |
             selftest*.json
             install.log
+            update-test.json
+            update-install.log
 
   e2e:
     # Real first run on a clean Windows runner: CPU engine download + install, then sync the demo songs.
     needs: build
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.e2e)
+    if: github.event_name != 'workflow_dispatch' || inputs.e2e
     runs-on: windows-latest
     timeout-minutes: 75
     steps:
@@ -118,29 +172,51 @@ jobs:
           path: inst
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install silently
         shell: pwsh
         run: |
           $f = Get-ChildItem inst\*.exe | Select-Object -First 1
           $p = Start-Process $f.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER',"/DIR=$env:RUNNER_TEMP\lsync" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "install failed" }
-      - name: First-run setup (CPU build, resumable downloads)
+      - name: Mirror the CPU setup files locally (SHA256-checked)
         shell: pwsh
         run: |
+          $env:LYRICIST_SYNC_HOME = "$env:RUNNER_TEMP\fetch-home"
+          python tools/fetch_mirror.py cpu mirror
+          if ($LASTEXITCODE -ne 0) { throw "mirror fetch failed" }
+      - name: First-run setup in the GUI (CPU build) from a throttled local mirror; event-loop latency per step
+        shell: pwsh
+        run: |
+          $torch = (Get-ChildItem mirror\torch-*.whl | Select-Object -First 1).Name
+          $srv = Start-Process python -ArgumentList 'tools/serve_throttled.py','mirror','--port','8765','--rate','40','--slow',"$torch=3" -PassThru -NoNewWindow -RedirectStandardError mirror-server.log
+          Start-Sleep 2
+          $env:LYRICIST_SYNC_MIRROR = 'http://127.0.0.1:8765/'
+          $env:LYRICIST_SYNC_STALL = '20'
           $t = Get-Date
-          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--setup','--variant','cpu' -Wait -PassThru -NoNewWindow
-          Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\setup.log" -Tail 40
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--setup-gui','--auto','--variant','cpu','--report','setup-gui.json','--shots','setup-shots' -Wait -PassThru -NoNewWindow
+          Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+          Get-Content setup-gui.json
           "setup took $([int]((Get-Date) - $t).TotalSeconds) s"
-          if ($p.ExitCode -ne 0) { throw "setup failed" }
-      - name: Sync the demo songs (English with a repeated chorus, Greek)
+          Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\setup.log" -Tail 30
+          if ($p.ExitCode -ne 0) { throw "GUI setup failed or the UI was not responsive (see latency_ms)" }
+      - name: Engine unit tests in the installed engine Python (timing, repeats)
         shell: pwsh
         run: |
-          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--sync','tests\fixtures\demo_en.mp3','tests\fixtures\demo_el.mp3','--out','e2e-out','--report','e2e.json' -Wait -PassThru -NoNewWindow
+          $py = "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\runtime\python\python.exe"
+          & $py tests/test_timing.py -v
+          if ($LASTEXITCODE -ne 0) { throw "test_timing failed" }
+          & $py tests/test_repeats.py -v
+          if ($LASTEXITCODE -ne 0) { throw "test_repeats failed" }
+      - name: Sync the demo songs and the hard fixtures (long intro, hummed intro, vocal bleed, choir)
+        shell: pwsh
+        run: |
+          $songs = @('tests\fixtures\demo_en.mp3','tests\fixtures\demo_el.mp3','tests\hard\intro_long.mp3','tests\hard\intro_hum.mp3','tests\hard\intro_bleed.mp3','tests\hard\choir.mp3')
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList (@('--sync') + $songs + @('--out','e2e-out','--report','e2e.json')) -Wait -PassThru -NoNewWindow
           Get-ChildItem e2e-out
           if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "sync failed" }
       - name: Check accuracy against the known line times
-        run: python tests/check_e2e.py e2e.json
+        run: python tests/check_e2e.py e2e.json --expect 6
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -156,3 +232,6 @@ jobs:
             e2e.json
             e2e-out/*
             e2e-logs/*
+            setup-gui.json
+            setup-shots/*
+            mirror-server.log

@@ -1,6 +1,6 @@
 """Ax-Easy Lyricist Sync: auto-sync pasted lyrics to songs (Demucs + Whisper + MMS_FA)."""
 APP_NAME = "Ax-Easy Lyricist Sync"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PUBLISHER = "Ax-Easy"
 PUBLISHER_URL = "https://www.ax-easy.com"
 CREDIT_HTML = ('Made by <a href="https://www.ax-easy.com">Ax-Easy</a> with the help of '
