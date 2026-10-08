@@ -1,10 +1,12 @@
 """Check the CLI --report of the e2e job against the fixtures' known line times."""
 import json, os, sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # Greek file names on a cp1252 console
 HERE = os.path.dirname(os.path.abspath(__file__))
 rep = json.load(open(sys.argv[1], encoding='utf-8'))
 ok = True
 for r in rep:
-    name = os.path.splitext(os.path.basename(r['audio']))[0]
+    name = os.path.splitext(r['audio'].replace('\\', '/').split('/')[-1])[0]
     truth = json.load(open(os.path.join(HERE, 'fixtures', name + '.truth.json'), encoding='utf-8'))['lines']
     res = r['result']
     errs = [abs(a['start'] - b['start']) for a, b in zip(res['lines'], truth)]
