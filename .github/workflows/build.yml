@@ -1,0 +1,158 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: "Also run the first-run setup (CPU, ~2.2 GB download) and a real sync"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Unit tests (exporters vs Lyricist 1.1.0 formats.js, repeat detection, downloader)
+        run: |
+          node --version
+          python tests/test_formats.py -v
+          python tests/test_repeats.py -v
+          python tests/test_bootstrap.py -v
+
+      - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
+        run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
+
+      - name: PyInstaller
+        run: pyinstaller LyricistSync.spec --noconfirm --clean
+
+      - name: Self-test the frozen app (GUI loads, footer, exporters, native frame)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--selftest','--report','selftest.json' -Wait -PassThru -NoNewWindow
+          Get-Content selftest.json
+          if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
+
+      - name: Screenshots (before/after sync with the demo fixtures)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--screens','screens-ci','--fixture','tests\fixtures' -Wait -PassThru -NoNewWindow
+          Get-ChildItem screens-ci
+          if ($p.ExitCode -ne 0) { throw "screens failed: $($p.ExitCode)" }
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc installer\LyricistSync.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $f = Get-ChildItem dist-installer\*.exe | Select-Object -First 1
+          $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+          "$h  $($f.Name)" | Out-File -Encoding ascii "$($f.FullName).sha256"
+          "Installer: $($f.Name) $($f.Length) bytes sha256=$h"
+
+      - name: Silent install, self-test the installed app, silent uninstall
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem dist-installer\*.exe | Select-Object -First 1
+          $dir = "$env:RUNNER_TEMP\lsync-install"
+          $p = Start-Process $f.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER',"/DIR=$dir",'/LOG=install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log; throw "install failed" }
+          $p = Start-Process "$dir\LyricistSync.exe" -ArgumentList '--selftest','--report','selftest-installed.json' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Get-Content selftest-installed.json; throw "installed selftest failed" }
+          $lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Ax-Easy" -Filter *.lnk
+          $lnk | ForEach-Object { $_.Name }
+          if (-not $lnk) { throw "no Start menu shortcut" }
+          $p = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait -PassThru
+          Start-Sleep 3
+          if (Test-Path "$dir\LyricistSync.exe") { throw "uninstall left the app behind" }
+          "install/selftest/uninstall OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            dist-installer/*.exe
+            dist-installer/*.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screens-ci/*.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest
+          path: |
+            selftest*.json
+            install.log
+
+  e2e:
+    # Real first run on a clean Windows runner: CPU engine download + install, then sync the demo songs.
+    needs: build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.e2e)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: inst
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem inst\*.exe | Select-Object -First 1
+          $p = Start-Process $f.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER',"/DIR=$env:RUNNER_TEMP\lsync" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install failed" }
+      - name: First-run setup (CPU build, resumable downloads)
+        shell: pwsh
+        run: |
+          $t = Get-Date
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--setup','--variant','cpu' -Wait -PassThru -NoNewWindow
+          Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\setup.log" -Tail 40
+          "setup took $([int]((Get-Date) - $t).TotalSeconds) s"
+          if ($p.ExitCode -ne 0) { throw "setup failed" }
+      - name: Sync the demo songs (English with a repeated chorus, Greek)
+        shell: pwsh
+        run: |
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--sync','tests\fixtures\demo_en.mp3','tests\fixtures\demo_el.mp3','--out','e2e-out','--report','e2e.json' -Wait -PassThru -NoNewWindow
+          Get-ChildItem e2e-out
+          if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "sync failed" }
+      - name: Check accuracy against the known line times
+        run: python tests/check_e2e.py e2e.json
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force e2e-logs | Out-Null
+          Copy-Item "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\*.log" e2e-logs -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\state.json" e2e-logs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e
+          path: |
+            e2e.json
+            e2e-out/*
+            e2e-logs/*

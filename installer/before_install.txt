@@ -1,0 +1,17 @@
+Ax-Easy Lyricist Sync 1.0.0
+
+Auto-syncs pasted lyrics to your songs and exports TTML, LRC, SRT and VTT.
+
+FIRST RUN
+This installer is small. The first time you start the app it downloads the sync
+engine into %LOCALAPPDATA%\Ax-Easy\LyricistSync:
+  - NVIDIA GPU (CUDA 12.4 build): about 4.5 GB
+  - CPU only: about 2.2 GB
+Downloads are SHA256-verified and resume where they stopped.
+
+WINDOWS SMARTSCREEN
+The installer is not code-signed, so Windows SmartScreen may show
+"Windows protected your PC". Click "More info" and then "Run anyway".
+
+Made by Ax-Easy with the help of Grok (https://www.ax-easy.com, https://grok.com)
+Inspired by the music of Monitored (https://www.monitored.gr)

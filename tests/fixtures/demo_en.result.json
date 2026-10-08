@@ -1,0 +1,131 @@
+{
+ "lines": [
+  {
+   "idx": 0,
+   "text": "Glass towers glowing in the rain",
+   "start": 3.985,
+   "end": 5.828,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 1,
+   "text": "We trace the light along the lane",
+   "start": 7.009,
+   "end": 9.072,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 2,
+   "text": "Hold the line, hold the line tonight",
+   "start": 10.233,
+   "end": 13.097,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 3,
+   "text": "Every word will find its time",
+   "start": 14.279,
+   "end": 16.401,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 4,
+   "text": "Silent signals crossing over",
+   "start": 17.603,
+   "end": 19.686,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 5,
+   "text": "Morning comes a little closer",
+   "start": 20.867,
+   "end": 22.77,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 2,
+   "text": "Hold the line, hold the line tonight",
+   "start": 23.951,
+   "end": 26.775,
+   "repeat": true,
+   "flag": ""
+  },
+  {
+   "idx": 3,
+   "text": "Every word will find its time",
+   "start": 27.956,
+   "end": 30.059,
+   "repeat": true,
+   "flag": ""
+  }
+ ],
+ "duration": 33.103,
+ "language": "en",
+ "repeats": [
+  {
+   "lines": [
+    2,
+    3
+   ],
+   "before": 6,
+   "time": 23.66
+  }
+ ],
+ "device": "cpu",
+ "timings": {
+  "decode": 0.23,
+  "separate": 12.95,
+  "transcribe": 9.07,
+  "align": 6.89,
+  "total": 29.13
+ },
+ "transcript": [
+  {
+   "start": 3.599999999999998,
+   "end": 5.84,
+   "text": " Last hours glowing in the rain."
+  },
+  {
+   "start": 7.08,
+   "end": 9.04,
+   "text": " We trace the light along the lane."
+  },
+  {
+   "start": 10.16,
+   "end": 12.8,
+   "text": " Hold the line, hold the line tonight."
+  },
+  {
+   "start": 13.88,
+   "end": 16.32,
+   "text": " Every word will find its time."
+  },
+  {
+   "start": 17.18,
+   "end": 19.56,
+   "text": " Silent signals crossing over."
+  },
+  {
+   "start": 20.68,
+   "end": 22.66,
+   "text": " Morning comes a little closer."
+  },
+  {
+   "start": 23.66,
+   "end": 26.56,
+   "text": " Hold the line, hold the line tonight."
+  },
+  {
+   "start": 26.56,
+   "end": 29.92,
+   "text": " it. Every word will find its time."
+  }
+ ],
+ "device_name": "CPU"
+}

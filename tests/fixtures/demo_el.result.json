@@ -1,0 +1,55 @@
+{
+ "lines": [
+  {
+   "idx": 0,
+   "text": "Καλησπέρα κόσμε",
+   "start": 3.982,
+   "end": 5.122,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 1,
+   "text": "Ο ήλιος ανατέλλει πάλι 🌅",
+   "start": 6.263,
+   "end": 7.644,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 2,
+   "text": "Τα λόγια βρίσκουν τον ρυθμό τους",
+   "start": 8.764,
+   "end": 10.665,
+   "repeat": false,
+   "flag": ""
+  },
+  {
+   "idx": 3,
+   "text": "Σ’ αγαπώ σαν το πρώτο φως",
+   "start": 11.845,
+   "end": 14.147,
+   "repeat": false,
+   "flag": ""
+  }
+ ],
+ "duration": 17.188,
+ "language": "el",
+ "repeats": [],
+ "device": "cpu",
+ "timings": {
+  "decode": 0.14,
+  "separate": 6.57,
+  "transcribe": 9.52,
+  "align": 4.11,
+  "total": 20.35
+ },
+ "transcript": [
+  {
+   "start": 3.3200000000000003,
+   "end": 14.04,
+   "text": " Καλίσπερα κόσμαι. Ο Ιωσάννα τελειπάλι. Τα λοια βρεις κουντωνρηθμότους. Συγματ' αγαπώ σαν το πρωτοφός."
+  }
+ ],
+ "device_name": "CPU"
+}

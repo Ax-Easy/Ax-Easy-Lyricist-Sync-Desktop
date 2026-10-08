@@ -1,0 +1,53 @@
+{
+ "duration": 33.103,
+ "lines": [
+  {
+   "line": 0,
+   "text": "Glass towers glowing in the rain",
+   "start": 4.0,
+   "end": 5.899
+  },
+  {
+   "line": 1,
+   "text": "We trace the light along the lane",
+   "start": 6.999,
+   "end": 9.116
+  },
+  {
+   "line": 2,
+   "text": "Hold the line, hold the line tonight",
+   "start": 10.216,
+   "end": 13.116
+  },
+  {
+   "line": 3,
+   "text": "Every word will find its time",
+   "start": 14.216,
+   "end": 16.441
+  },
+  {
+   "line": 4,
+   "text": "Silent signals crossing over",
+   "start": 17.541,
+   "end": 19.701
+  },
+  {
+   "line": 5,
+   "text": "Morning comes a little closer",
+   "start": 20.801,
+   "end": 22.778
+  },
+  {
+   "line": 2,
+   "text": "Hold the line, hold the line tonight",
+   "start": 23.878,
+   "end": 26.778
+  },
+  {
+   "line": 3,
+   "text": "Every word will find its time",
+   "start": 27.878,
+   "end": 30.103
+  }
+ ]
+}
