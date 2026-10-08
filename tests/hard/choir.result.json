@@ -1,0 +1,120 @@
+{
+ "lines": [
+  {
+   "idx": 0,
+   "text": "Walking alone through the city at night",
+   "start": 4.043,
+   "end": 6.204,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 1,
+   "text": "Counting the windows that glow in the dark",
+   "start": 7.245,
+   "end": 9.687,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 2,
+   "text": "Sing it together, we are the light",
+   "start": 10.788,
+   "end": 12.969,
+   "repeat": false,
+   "flag": "",
+   "conf": 0.7,
+   "why": [
+    "weak acoustic match"
+   ]
+  },
+  {
+   "idx": 3,
+   "text": "Raise up your voices and carry the spark",
+   "start": 13.91,
+   "end": 16.712,
+   "repeat": false,
+   "flag": "",
+   "conf": 0.58,
+   "why": [
+    "weak acoustic match"
+   ]
+  },
+  {
+   "idx": 4,
+   "text": "Morning is calling my name from afar",
+   "start": 17.633,
+   "end": 19.894,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 5,
+   "text": "I will be waiting wherever you are",
+   "start": 20.375,
+   "end": 22.99,
+   "repeat": false,
+   "flag": "",
+   "conf": 0.92,
+   "why": []
+  }
+ ],
+ "duration": 56.0,
+ "language": "en",
+ "repeats": [],
+ "device": "cpu",
+ "stem": "htdemucs",
+ "low_conf": 1,
+ "version": 2,
+ "timings": {
+  "decode": 0.21,
+  "separate": 17.61,
+  "transcribe": 12.15,
+  "emissions": 8.78,
+  "align": 0.02,
+  "total": 38.78
+ },
+ "transcript": [
+  {
+   "start": 3.7200000000000033,
+   "end": 6.16,
+   "text": " Walking alone through the city at night."
+  },
+  {
+   "start": 7.100000000000003,
+   "end": 9.68,
+   "text": " Counting the windows that glow in the dark."
+  },
+  {
+   "start": 10.66,
+   "end": 12.96,
+   "text": " See it together, we are the light."
+  },
+  {
+   "start": 13.82,
+   "end": 16.58,
+   "text": " Raise up your voices and carry the talk."
+  },
+  {
+   "start": 17.3,
+   "end": 19.82,
+   "text": " Morning is calling my name from afar."
+  },
+  {
+   "start": 20.12,
+   "end": 22.36,
+   "text": " From afar I will be waiting wherever you are."
+  },
+  {
+   "start": 22.54,
+   "end": 22.9,
+   "text": " You are."
+  }
+ ]
+}

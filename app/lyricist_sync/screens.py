@@ -111,6 +111,28 @@ def _save(img, path):
     print('saved', path, flush=True)
 
 
+def _choir(app, win, dark, fixture_dir, label, out_dir, name):
+    """Review list of the choir fixture with its real 1.1.0 engine result (amber 'check' markers)."""
+    hard = os.path.join(fixture_dir, '..', 'hard')
+    audio, rp = os.path.join(hard, 'choir.mp3'), os.path.join(hard, 'choir.result.json')
+    if not (os.path.exists(audio) and os.path.exists(rp)):
+        return
+    app.add_songs([audio])
+    s = app.songs[-1]
+    with open(rp, encoding='utf-8') as f:
+        s.result = json.load(f)
+    low = s.result.get('low_conf') or 0
+    s.status = 'Synced' + (' · %d to check' % low if low else '')
+    app.cur = len(app.songs) - 1
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(s)
+    k = next((i for i, l in enumerate(s.result['lines']) if (l.get('conf') or 1) < 0.6), 0)
+    win.review.selectRow(k)
+    win.set_busy(False, '', 1.0)
+    _save(compose_labeled(win, dark, label + ' · choir fixture, real 1.1.0 engine result: amber "check" on the choir line'),
+          os.path.join(out_dir, '%s_9_choir_review.png' % name))
+
+
 def render(out_dir, fixture_dir=None):
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
@@ -218,6 +240,8 @@ def render(out_dir, fixture_dir=None):
                 c.show()
                 _save(compose_labeled(c, dark, 'Files already exist'), os.path.join(out_dir, '%s_8_conflict.png' % name))
                 c.close()
+            if style == 'win10':
+                _choir(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     chrome.force_win10(forced)
     return 0

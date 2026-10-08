@@ -11,7 +11,7 @@ import os
 import random
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QPixmap, QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 
 from . import winfx
 
@@ -172,3 +172,23 @@ class Frame:
         if bt:
             return winfx.HTBOTTOM
         return None
+
+
+def cached_background(widget, key, paint):
+    """The window background (shadow + glass) is the expensive part of every repaint; paint it
+    once per size/theme into a pixmap and blit it. Progress updates then only redraw small
+    regions, which keeps the UI thread free even on a busy CPU."""
+    dpr = widget.devicePixelRatioF()
+    full = (widget.width(), widget.height(), dpr) + tuple(key)
+    c = getattr(widget, '_bg_cache', None)
+    if c is None or c[0] != full:
+        pm = QPixmap(max(1, int(widget.width() * dpr)), max(1, int(widget.height() * dpr)))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        q = QPainter(pm)
+        q.setRenderHint(QPainter.Antialiasing)
+        paint(q)
+        q.end()
+        c = (full, pm)
+        widget._bg_cache = c
+    return c[1]

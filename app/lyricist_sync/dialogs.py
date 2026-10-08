@@ -54,12 +54,16 @@ class GlassDialog(QDialog, chrome.Frame):
                 self.resize(self.width() + 2 * m, self.height() + 2 * m)
 
     def paintEvent(self, _e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
         body = self.body_rect()
-        if self.margin():
-            chrome.paint_shadow(p, body, chrome.RADIUS, self.theme.dark)
-        chrome.paint_glass(p, body, chrome.RADIUS, self.theme, self._backdrop)
+
+        def paint(q):
+            if self.margin():
+                chrome.paint_shadow(q, body, chrome.RADIUS, self.theme.dark)
+            chrome.paint_glass(q, body, chrome.RADIUS, self.theme, self._backdrop)
+        pm = chrome.cached_background(self, (self.theme.dark, self._backdrop, self.margin()), paint)
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawPixmap(0, 0, pm)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton and e.position().y() < 56 + self.margin() and self.body_rect().contains(e.position()):

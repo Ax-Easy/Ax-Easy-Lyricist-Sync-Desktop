@@ -347,28 +347,31 @@ class GlassWindow(QWidget, chrome.Frame):
     # ---------------------------------------------------------------- painting
     def paintEvent(self, _e):
         t = self.theme
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
         body = self.body_rect()
         rad = self.radius()
-        if self.margin():
-            chrome.paint_shadow(p, body, rad, t.dark)
-        chrome.paint_glass(p, body, rad, t, self._backdrop)
-        # Soft card shadows (stacked translucent rounded rects = cheap blur), clipped to the body.
-        path = QPainterPath()
-        path.addRoundedRect(body, rad, rad)
-        p.setClipPath(path)
-        p.setPen(Qt.NoPen)
-        for card in self._cards:
-            if not card.isVisible():
-                continue
-            g0 = QRectF(card.geometry())
-            for i in range(10, 0, -1):
-                sh = QColor(*t.shadow)
-                sh.setAlpha(int(t.shadow[3] * (1 - i / 11) ** 2 / 3))
-                p.setBrush(sh)
-                p.drawRoundedRect(g0.adjusted(-i, -i + 6, i, i + 6), card.radius + i, card.radius + i)
-        p.setClipping(False)
+        cards = tuple((card.geometry().getRect(), card.radius) for card in self._cards if card.isVisible())
+
+        def paint(q):
+            if self.margin():
+                chrome.paint_shadow(q, body, rad, t.dark)
+            chrome.paint_glass(q, body, rad, t, self._backdrop)
+            # Soft card shadows (stacked translucent rounded rects = cheap blur), clipped to the body.
+            path = QPainterPath()
+            path.addRoundedRect(body, rad, rad)
+            q.setClipPath(path)
+            q.setPen(Qt.NoPen)
+            for (x, y, w, h), cr in cards:
+                g0 = QRectF(x, y, w, h)
+                for i in range(10, 0, -1):
+                    sh = QColor(*t.shadow)
+                    sh.setAlpha(int(t.shadow[3] * (1 - i / 11) ** 2 / 3))
+                    q.setBrush(sh)
+                    q.drawRoundedRect(g0.adjusted(-i, -i + 6, i, i + 6), cr + i, cr + i)
+            q.setClipping(False)
+        pm = chrome.cached_background(self, (t.dark, self._backdrop, self.margin(), rad, cards), paint)
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawPixmap(0, 0, pm)
 
     def _apply_theme(self):
         t = self.theme

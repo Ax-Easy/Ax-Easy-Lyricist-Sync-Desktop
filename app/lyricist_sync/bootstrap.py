@@ -127,7 +127,7 @@ def engine_env():
 
 
 def model_group(m):
-    d = m['dest']
+    d = m['dest'].replace('\\', '/')  # plan() turns dest into a native path (backslashes on Windows)
     return 'demucs' if '/demucs/' in d else 'whisper' if '/whisper/' in d else 'mms'
 
 
