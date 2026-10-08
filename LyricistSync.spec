@@ -7,6 +7,7 @@ datas = [
     ('app/lyricist_sync/manifest.json', 'lyricist_sync'),
     ('app/lyricist_sync/res/*', 'lyricist_sync/res'),
     ('engine/lyricist_engine.py', 'engine'),
+    ('engine/timing.py', 'engine'),
 ]
 datas += [(w, 'wheels') for w in glob.glob('wheels/*.whl')]
 
