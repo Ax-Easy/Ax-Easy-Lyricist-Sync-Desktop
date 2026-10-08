@@ -1,0 +1,29 @@
+{
+ "duration": 44.0,
+ "lines": [
+  {
+   "line": 0,
+   "text": "All of the lights are fading away",
+   "start": 26.0,
+   "end": 28.1
+  },
+  {
+   "line": 1,
+   "text": "Over the river the evening is cold",
+   "start": 29.1,
+   "end": 31.187
+  },
+  {
+   "line": 2,
+   "text": "Every road leads me back to you",
+   "start": 32.187,
+   "end": 34.202
+  },
+  {
+   "line": 3,
+   "text": "And I will stay until the morning",
+   "start": 35.202,
+   "end": 37.191
+  }
+ ]
+}

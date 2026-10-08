@@ -1,16 +1,22 @@
 """Application controller: songs, settings, sync queue and export."""
+import importlib
 import json
 import os
 import sys
+import threading
+import time
 import uuid
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from . import bootstrap, paths, theme as thememod
+from . import bootstrap, paths, theme as thememod, updater
 from .engine_client import EngineClient
+from .export import export_song, read_tags, target_dir
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
-from .window import GlassWindow, export_song, read_tags
+from .window import GlassWindow
+
+meta = importlib.import_module(__package__)
 
 AUDIO_EXT = ('.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wma')
 STAGES = {'decode': 'Reading audio', 'separate': 'Separating vocals', 'transcribe': 'Listening for repeats',
@@ -18,10 +24,15 @@ STAGES = {'decode': 'Reading audio', 'separate': 'Separating vocals', 'transcrib
 ISO_FROM_WHISPER = {v[0]: v[1] for v in LANGS.values() if v[0]}
 
 
+class _UpdSignal(QObject):
+    checked = Signal(object)
+
+
 class Song:
-    def __init__(self, path):
+    def __init__(self, path, out_dir=None):
         self.id = uuid.uuid4().hex[:8]
         self.path = path
+        self.out_dir = out_dir if out_dir and os.path.isdir(out_dir) else None
         self.tags = read_tags(path)
         text, src = sidecar_lyrics(path)
         self.lyrics = text or ''
@@ -49,7 +60,14 @@ class App:
         self.engine_info = None
         self.settings_path = os.path.join(paths.home(), 'settings.json')
         self.settings = {'dark': None, 'out_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'Lyricist Sync'),
-                         'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False}
+                         'save_mode': 'beside', 'song_dirs': {},
+                         'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False,
+                         'update_check': True, 'update_last': 0, 'update_skip': ''}
+        self.update_state = None
+        self._upd = _UpdSignal()
+        self._upd.checked.connect(self._quiet_checked)
+        self._ask_dir = None
+        self._batch_conflict = None
         try:
             with open(self.settings_path, encoding='utf-8') as f:
                 self.settings.update(json.load(f))
@@ -90,7 +108,7 @@ class App:
     def add_songs(self, files):
         for p in files:
             if os.path.isfile(p) and os.path.splitext(p)[1].lower() in AUDIO_EXT and not any(s.path == p for s in self.songs):
-                self.songs.append(Song(p))
+                self.songs.append(Song(p, (self.settings.get('song_dirs') or {}).get(os.path.abspath(p))))
         if self.cur < 0 and self.songs:
             self.cur = 0
         self.win.refresh_queue(self.songs, self.cur)
@@ -191,19 +209,58 @@ class App:
         done = len([x for x in self.songs if x.status.startswith('Synced')])
         self.win.set_busy(True, '%s · %s' % (s.label(), s.status), pct)
 
+    def resync(self, s, row):
+        """Keep line `row` at its current start and re-align only the lines after it."""
+        if self.busy or not s.result or not self.ensure_engine():
+            return
+        lines = s.result['lines']
+        job = {'cmd': 'resync', 'id': s.id, 'audio': s.path, 'lines': [l['text'] for l in lines],
+               'idx': [l.get('idx', k) for k, l in enumerate(lines)], 'from': row, 'anchor': lines[row]['start'],
+               'starts': [l['start'] for l in lines], 'ends': [l['end'] for l in lines], 'iso': s.iso,
+               'lang': resolve_lang(s.lang, split_lines(s.lyrics))[0]}
+        self.busy = True
+        self.queue = [s]
+        s.status = 'Re-syncing from line %d' % (row + 1)
+        self._set_row(s)
+        self.win.set_busy(True, '%s · re-syncing from line %d' % (s.label(), row + 1), 0.0)
+        try:
+            self.engine.submit(job)
+        except OSError as e:
+            self._error(s.id, 'Engine could not start: %s' % e)
+
     def _result(self, sid, res):
         s = self._find(sid)
+        if s and 'from' in res and s.result:
+            k0 = res['from']
+            keep = s.result['lines'][:k0]
+            new = res['lines']
+            if new:
+                new[0]['manual'] = True
+                new[0]['conf'], new[0]['why'] = 1.0, ['set by hand']
+            s.result['lines'] = keep + new
+            s.dirty = True
+            low = sum(1 for l in s.result['lines'] if (l.get('conf') if l.get('conf') is not None else 1) < 0.6)
+            s.status = 'Synced' + (' · %d to check' % low if low else '')
+            self._set_row(s)
+            if s is self.current():
+                self.win.show_song(s)
+                self.win.review.selectRow(k0)
+            self.win.status_lbl.setText('Re-synced %d lines after line %d.' % (max(0, len(new) - 1), k0 + 1))
+            self._pop(sid)
+            return
         if s:
             s.result = res
             reps = len(res.get('repeats') or [])
-            s.status = 'Synced' + (' · %d repeat%s' % (reps, 's' if reps > 1 else '') if reps else '')
+            low = res.get('low_conf') or 0
+            s.status = 'Synced' + (' · %d repeat%s' % (reps, 's' if reps > 1 else '') if reps else '') + \
+                (' · %d to check' % low if low else '')
             if not s.iso and res.get('language') in ISO_FROM_WHISPER:
                 s.iso = ISO_FROM_WHISPER[res['language']]
             self._set_row(s)
             if s is self.current():
                 self.win.show_song(s)
             if self.settings.get('auto_export'):
-                self.export(s)
+                self.export_songs([s], batch=bool(self.queue[1:]))
         self._pop(sid)
 
     def _error(self, sid, msg):
@@ -216,6 +273,9 @@ class App:
 
     def _pop(self, sid):
         self.queue = [q for q in self.queue if q.id != sid]
+        if not self.queue:
+            self._ask_dir = None
+            self._batch_conflict = None
         self._next()
 
     def _exited(self, code):
@@ -234,26 +294,106 @@ class App:
         self.win.refresh_queue(self.songs, self.cur)
 
     # ---------------------------------------------------------------- export
-    def export(self, s):
+    def set_song_dirs(self, songs, d):
+        sd = dict(self.settings.get('song_dirs') or {})
+        for s in songs:
+            s.out_dir = d
+            key = os.path.abspath(s.path)
+            if d:
+                sd[key] = d
+            else:
+                sd.pop(key, None)
+        if len(sd) > 500:
+            sd = dict(list(sd.items())[-500:])
+        self.settings['song_dirs'] = sd
+        self.save_settings()
+        self.win.refresh_dirs()
+
+    def export_songs(self, songs, batch=False, ask_dir=None):
+        """Export each song to its own folder. Never overwrites silently. Returns files written."""
+        songs = [s for s in songs if s.result]
         opts = self.win.export_options()
+        if not songs:
+            return []
         if not opts['formats']:
             self.win.status_lbl.setText('Choose at least one format.')
             return []
-        if not opts['dir']:
-            opts['dir'] = self.settings['out_dir']
-        try:
-            files = export_song(s, opts)
-        except OSError as e:
-            self.win.status_lbl.setText('Export failed: %s' % e)
-            return []
-        self.win.status_lbl.setText('Exported %d files to %s' % (len(files), opts['dir']))
+        asked = ask_dir or (self._ask_dir if batch else None)
+        if any(target_dir(s, self.settings) is None for s in songs) and not asked:
+            asked = QFileDialog.getExistingDirectory(self.win, 'Save the lyric files to…',
+                                                     self.settings.get('last_export_dir') or os.path.dirname(songs[0].path))
+            if not asked:
+                self.win.status_lbl.setText('Export cancelled.')
+                return []
+            self.settings['last_export_dir'] = asked
+            self.save_settings()
+            if batch:
+                self._ask_dir = asked
+        if batch:
+            if self._batch_conflict is None:
+                self._batch_conflict = {}
+            state = self._batch_conflict
+        else:
+            state = {}
+        files, folders, skipped = [], [], 0
+        for s in songs:
+            d = target_dir(s, self.settings, asked)
+            try:
+                written = export_song(s, dict(opts, dir=d), on_conflict=lambda song, ex: self.win.ask_conflict(song, ex, state))
+            except OSError as e:
+                self.win.status_lbl.setText('Export failed for %s: %s' % (s.label(), e))
+                continue
+            if not written:
+                skipped += 1
+            files += written
+            if written and d not in folders:
+                folders.append(d)
+        self.win.show_export_result(folders, len(files), skipped)
         return files
+
+    def export_selected(self):
+        sel = [s for s in self.win.selected_songs() if s.result]
+        if not sel and self.current() and self.current().result:
+            sel = [self.current()]
+        return self.export_songs(sel)
 
     def export_current(self):
         s = self.current()
-        if s and s.result:
-            return self.export(s)
-        return []
+        return self.export_songs([s]) if s and s.result else []
+
+    def export(self, s):
+        return self.export_songs([s])
+
+    # ---------------------------------------------------------------- updates
+    def quiet_update_check(self):
+        if self.screenshot or not updater.due(self.settings):
+            return
+        url = updater.manifest_url(self.settings)
+        threading.Thread(target=lambda: self._upd.checked.emit(updater.check(meta.VERSION, url)), daemon=True).start()
+
+    def _quiet_checked(self, r):
+        if r['status'] in ('available', 'current'):
+            self.settings['update_last'] = time.time()
+            self.save_settings()
+        self.update_result(r)
+
+    def update_result(self, r):
+        self.update_state = r
+        m = r.get('manifest') or {}
+        badge = r.get('status') == 'available' and m.get('version') != self.settings.get('update_skip')
+        self.win.btn_update.set_badge(badge)
+        self.win.btn_update.setToolTip(('Version %s is available' % m['version']) if badge else 'Check for updates')
+
+    def open_updates(self):
+        from .dialogs import UpdateDialog
+        r = self.update_state if (self.update_state or {}).get('status') == 'available' else None
+        UpdateDialog(self.win, self, r).exec()
+
+    def quit_for_update(self):
+        self.engine.stop()
+        self.win.player.stop()
+        self.busy = False
+        QTimer.singleShot(200, self.qapp.quit)
 
 
 def run_gui(argv):
@@ -269,4 +409,5 @@ def run_gui(argv):
         app.add_songs(files)
     if not bootstrap.is_ready():
         QTimer.singleShot(400, app.ensure_engine)
+    QTimer.singleShot(3000, app.quiet_update_check)
     return qapp.exec()

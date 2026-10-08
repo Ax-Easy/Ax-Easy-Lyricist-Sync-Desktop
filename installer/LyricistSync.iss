@@ -1,7 +1,7 @@
 ; Inno Setup 6 script for Ax-Easy Lyricist Sync (per-user install, no admin needed).
 #define MyAppName "Ax-Easy Lyricist Sync"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "1.1.0"
 #endif
 #define MyAppPublisher "Ax-Easy"
 #define MyAppURL "https://www.ax-easy.com"
@@ -39,12 +39,18 @@ VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
 CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[InstallDelete]
+; the app folder is replaced as a whole on update (the old build used another Python version);
+; settings, the engine and the AI models live in %LOCALAPPDATA%\Ax-Easy\LyricistSync and are never touched here
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "..\dist\LyricistSync\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -56,8 +62,15 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; in-app updater: "Update now" runs the installer with /SILENT ... /RELAUNCH=1 and the app starts again afterwards
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: ShouldRelaunch
 
 [Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Data: String;

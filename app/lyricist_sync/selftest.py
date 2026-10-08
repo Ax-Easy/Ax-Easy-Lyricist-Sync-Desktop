@@ -43,7 +43,7 @@ def run(report_path=None):
 
     def manifest():
         m = bootstrap.manifest()
-        assert len(m['wheels']) > 30 and len(m['models']) == 3
+        assert len(m['wheels']) > 30 and len(m['models']) >= 3
         return {'cuda_gb': round(bootstrap.total_size('cuda') / 1e9, 2), 'cpu_gb': round(bootstrap.total_size('cpu') / 1e9, 2)}
     check('manifest', manifest)
 
@@ -96,6 +96,7 @@ def run(report_path=None):
         win = app.win
         win.show()
         qapp.processEvents()
+        assert app.settings.get('save_mode') == 'beside', app.settings.get('save_mode')
         audio = os.path.join(tmp, 'Τραγούδι δοκιμής.wav')
         _wav(audio)
         with open(os.path.splitext(audio)[0] + '.txt', 'w', encoding='utf-8-sig') as f:
@@ -111,19 +112,194 @@ def run(report_path=None):
         win._nudge(0.1)
         win._nudge(-0.01)
         assert abs(s.result['lines'][1]['start'] - 6.80) < 1e-6, s.result['lines'][1]['start']
-        out = os.path.join(tmp, 'out')
-        win.out_dir.setText(out)
         win.bom.setChecked(True)
-        files = app.export_current()
+        names4 = ['Τραγούδι δοκιμής.lrc', 'Τραγούδι δοκιμής.srt', 'Τραγούδι δοκιμής.ttml', 'Τραγούδι δοκιμής.vtt']
+        files = app.export_current()  # default: next to the audio file
         names = sorted(os.path.basename(f) for f in files)
-        assert names == ['Τραγούδι δοκιμής.lrc', 'Τραγούδι δοκιμής.srt', 'Τραγούδι δοκιμής.ttml', 'Τραγούδι δοκιμής.vtt'], names
-        with open(os.path.join(out, 'Τραγούδι δοκιμής.srt'), 'rb') as f:
+        assert names == names4 and all(os.path.dirname(f) == tmp for f in files), files
+        with open(os.path.join(tmp, 'Τραγούδι δοκιμής.srt'), 'rb') as f:
             assert f.read(3) == b'\xef\xbb\xbf'
-        with open(os.path.join(out, 'Τραγούδι δοκιμής.ttml'), 'rb') as f:
+        with open(os.path.join(tmp, 'Τραγούδι δοκιμής.ttml'), 'rb') as f:
             data = f.read()
             assert data[:5] == b'<?xml' and b'xml:lang="el"' in data
+        assert 'Open folder' in win.status_lbl.text() and 'href=' in win.status_lbl.text(), win.status_lbl.text()
         return {'files': names, 'platform': qapp.platformName()}
     check('gui_export', gui)
+
+    def conflicts():
+        app, win = ctx['app'], ctx['app'].win
+        asked = []
+        real = win.ask_conflict
+
+        def script(choice):
+            def f(song, existing, state):
+                asked.append(len(existing))
+                return choice
+            return f
+        before = os.path.getmtime(os.path.join(tmp, 'Τραγούδι δοκιμής.srt'))
+        win.ask_conflict = script('skip')
+        assert app.export_current() == [] and asked == [4]
+        assert os.path.getmtime(os.path.join(tmp, 'Τραγούδι δοκιμής.srt')) == before
+        win.ask_conflict = script('keep')
+        kept = sorted(os.path.basename(f) for f in app.export_current())
+        assert kept == ['Τραγούδι δοκιμής (2).lrc', 'Τραγούδι δοκιμής (2).srt', 'Τραγούδι δοκιμής (2).ttml',
+                        'Τραγούδι δοκιμής (2).vtt'], kept
+        win.ask_conflict = script('overwrite')
+        over = app.export_current()
+        assert sorted(os.path.basename(f) for f in over)[0] == 'Τραγούδι δοκιμής.lrc', over
+        win.ask_conflict = real
+        assert real(app.current(), ['x'], {'all': 'skip'}) == 'skip'  # "apply to all" is honoured
+        from .dialogs import ConflictDialog
+        d = ConflictDialog(win, 'Song', [os.path.join(tmp, 'a.lrc')])
+        d.show()
+        qapp.processEvents()
+        d._pick('keep')
+        assert d.choice == 'keep'
+        return {'asked': asked}
+    check('export_conflicts', conflicts)
+
+    def song_folder():
+        app, win = ctx['app'], ctx['app'].win
+        s = app.current()
+        out = os.path.join(tmp, 'Άλμπουμ')
+        os.makedirs(out, exist_ok=True)
+        win.queue.selectRow(0)
+        assert win.selected_songs() == [s]
+        app.set_song_dirs([s], out)
+        files = app.export_current()
+        assert files and all(os.path.dirname(f) == out for f in files), files
+        app.settings['save_mode'] = 'folder'
+        app.settings['out_dir'] = os.path.join(tmp, 'chosen')
+        app.save_settings()
+        with open(app.settings_path, encoding='utf-8') as f:
+            saved = json.load(f)
+        assert saved['song_dirs'].get(os.path.normcase(os.path.abspath(s.path))) == out or out in saved['song_dirs'].values(), saved
+        assert saved['save_mode'] == 'folder'
+        app.set_song_dirs([s], None)
+        files = app.export_current()
+        assert files and all(os.path.dirname(f) == os.path.join(tmp, 'chosen') for f in files), files
+        app.settings['save_mode'] = 'beside'
+        app.save_settings()
+        return {'per_song': out, 'remembered': True}
+    check('per_song_folder', song_folder)
+
+    def confidence_resync():
+        app, win = ctx['app'], ctx['app'].win
+        s = app.current()
+        s.result['lines'][2]['conf'] = 0.31
+        s.result['lines'][2]['why'] = ['backing vocals overlap']
+        win.show_song(s)
+        notes = [(win.review.item(2, c).text(), win.review.item(2, c).toolTip()) for c in range(win.review.columnCount())
+                 if win.review.item(2, c)]
+        assert any('check' in t and 'backing' in tip for t, tip in notes), notes
+        jobs = []
+        app.ensure_engine = lambda: True
+
+        class FakeEngine:
+            def submit(self, job):
+                jobs.append(job)
+        real_engine, app.engine = app.engine, FakeEngine()
+        app.resync(s, 1)
+        app.engine = real_engine
+        assert jobs and jobs[0]['cmd'] == 'resync' and jobs[0]['from'] == 1 and jobs[0]['anchor'] == s.result['lines'][1]['start']
+        old0 = dict(s.result['lines'][0])
+        new = [dict(l, start=l['start'] + 0.5, end=l['end'] + 0.5) for l in s.result['lines'][1:]]
+        new[0]['start'] = s.result['lines'][1]['start']
+        app._result(s.id, {'from': 1, 'lines': new, 'cmd': 'resync'})
+        L = s.result['lines']
+        assert L[0] == old0 and L[1]['manual'] and L[1]['conf'] == 1.0 and len(L) == 4
+        assert not app.busy
+        return {'low_conf_marker': True, 'resync_job': {k: jobs[0][k] for k in ('cmd', 'from', 'anchor')}}
+    check('confidence_and_resync', confidence_resync)
+
+    def updates():
+        import http.server
+        import threading
+        from . import updater
+        srv_dir = os.path.join(tmp, 'www')
+        os.makedirs(srv_dir, exist_ok=True)
+        payload = os.urandom(300000)
+        with open(os.path.join(srv_dir, 'Setup-9.9.9.exe'), 'wb') as f:
+            f.write(payload)
+        import hashlib
+
+        class H(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **k):
+                super().__init__(*a, directory=srv_dir, **k)
+
+            def log_message(self, *a):
+                pass
+        httpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = 'http://127.0.0.1:%d/' % httpd.server_address[1]
+        man = {'version': '9.9.9', 'date': '2026-10-09', 'notes': '- test', 'url': base + 'Setup-9.9.9.exe',
+               'sha256': hashlib.sha256(payload).hexdigest(), 'size': len(payload)}
+        for name, m in (('update.json', man), ('bad.json', dict(man, sha256='0' * 64)), ('old.json', dict(man, version=VERSION))):
+            with open(os.path.join(srv_dir, name), 'w') as f:
+                json.dump(m, f)
+        old = os.environ.get('LYRICIST_SYNC_UPDATE_TEST')
+        os.environ['LYRICIST_SYNC_UPDATE_TEST'] = '1'
+        out = {}
+        try:
+            out['available'] = updater.check(VERSION, base + 'update.json')['status']
+            out['current'] = updater.check(VERSION, base + 'old.json')['status']
+            out['notfound'] = updater.check(VERSION, base + 'nope.json')['status']
+            out['offline'] = updater.check(VERSION, 'http://127.0.0.1:9/update.json', timeout=3)['status']
+            path = updater.download(man)
+            out['download'] = os.path.getsize(path) == len(payload)
+            os.remove(path)
+            try:
+                updater.download(dict(man, sha256='0' * 64))
+                out['mismatch'] = 'accepted'
+            except updater.UpdateError:
+                out['mismatch'] = 'rejected'
+            os.environ['LYRICIST_SYNC_UPDATE_TEST'] = '0'
+            out['insecure'] = updater.check(VERSION, base + 'update.json')['status']
+            out['ftp'] = updater.url_allowed('ftp://x/y.exe')
+        finally:
+            httpd.shutdown()
+            if old is None:
+                os.environ.pop('LYRICIST_SYNC_UPDATE_TEST', None)
+            else:
+                os.environ['LYRICIST_SYNC_UPDATE_TEST'] = old
+        assert out == {'available': 'available', 'current': 'current', 'notfound': 'notfound', 'offline': 'offline',
+                       'download': True, 'mismatch': 'rejected', 'insecure': 'insecure', 'ftp': False}, out
+        from .dialogs import UpdateDialog
+        d = UpdateDialog(ctx['app'].win, ctx['app'], {'status': 'notfound', 'message': 'x', 'manifest': None})
+        d.show()
+        qapp.processEvents()
+        assert 'No update information' in d.head.text(), d.head.text()
+        d.hide()
+        d = UpdateDialog(ctx['app'].win, ctx['app'], {'status': 'current', 'message': '', 'manifest': dict(man, version=VERSION)})
+        assert "up to date" in d.head.text() and d.btn_check.isVisibleTo(d), d.head.text()
+        d.hide()
+        assert ctx['app'].win.btn_update.isVisible()
+        return out
+    check('updater', updates)
+
+    def frame():
+        from . import chrome, winfx
+        win = ctx['app'].win
+        m = win.margin()
+        out = {'mode': win._mode, 'path': chrome.label(), 'margin': m, 'radius': win.radius()}
+        if win._mode == 'painted':
+            assert m == chrome.MARGIN and win.radius() == chrome.RADIUS
+            b = win.body_rect()
+            cy = int(b.center().y())
+            assert win.edge_hit(int(b.left()) + 1, cy) == winfx.HTLEFT
+            assert win.edge_hit(int(b.left()) - 6, cy) == winfx.HTLEFT
+            assert win.edge_hit(2, cy) == winfx.HTTRANSPARENT
+            assert win.edge_hit(int(b.right()) - 1, int(b.bottom()) - 1) == winfx.HTBOTTOMRIGHT
+            assert win.edge_hit(int(b.center().x()), cy) is None
+            win.showMaximized()
+            qapp.processEvents()
+            out['maximized_margin'] = win.margin()
+            assert win.margin() == 0
+            win.showNormal()
+            qapp.processEvents()
+        return out
+    check('window_frame', frame)
+
 
     def footer():
         win = ctx['app'].win
@@ -161,7 +337,8 @@ def run(report_path=None):
         d = SetupDialog(ctx['app'].win)
         d.show()
         qapp.processEvents()
-        d.close()
+        assert len(d.rows) == 7, list(d.rows)
+        d.hide()
         return 'ok'
     check('about_setup_dialogs', about)
 
@@ -173,15 +350,19 @@ def run(report_path=None):
         import ctypes
         hwnd = int(win.winId())
         style = ctypes.windll.user32.GetWindowLongPtrW(hwnd, -16)
-        out = {'backdrop': win._backdrop, 'build': winfx.build(), 'thickframe': bool(style & 0x00040000),
-               'maximizebox': bool(style & 0x00010000)}
+        out = {'backdrop': win._backdrop, 'mode': win._mode, 'build': winfx.build(), 'thickframe': bool(style & 0x00040000),
+               'maximizebox': bool(style & 0x00010000), 'margin': win.margin()}
+        if win._mode == 'painted':
+            assert win._backdrop != 'acrylic' and win.margin() == 20
         from PySide6.QtCore import QPoint
         from PySide6.QtGui import QCursor
-        g = win.geometry()
+        g = win.geometry().adjusted(win.margin(), win.margin(), -win.margin(), -win.margin())  # visible edge
         tests = {'left_edge': (QPoint(g.left() + 2, g.top() + g.height() // 2), winfx.HTLEFT),
                  'bottom_right': (QPoint(g.right() - 2, g.bottom() - 2), winfx.HTBOTTOMRIGHT),
                  'caption': (QPoint(g.left() + g.width() // 2, g.top() + 22), winfx.HTCAPTION),
                  'client': (QPoint(g.left() + g.width() // 2, g.top() + g.height() // 2), winfx.HTCLIENT)}
+        if win.margin():
+            tests['shadow'] = (QPoint(g.left() - 15, g.top() + g.height() // 2), winfx.HTTRANSPARENT)
         for name, (pt, want) in tests.items():
             got = win._hit(win.mapFromGlobal(pt))
             out[name] = got

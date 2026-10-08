@@ -1,0 +1,43 @@
+{
+ "duration": 56.0,
+ "lines": [
+  {
+   "line": 0,
+   "text": "Walking alone through the city at night",
+   "start": 4.0,
+   "end": 6.25
+  },
+  {
+   "line": 1,
+   "text": "Counting the windows that glow in the dark",
+   "start": 7.25,
+   "end": 9.737
+  },
+  {
+   "line": 2,
+   "text": "Sing it together, we are the light",
+   "start": 10.737,
+   "end": 13.051,
+   "choir": true
+  },
+  {
+   "line": 3,
+   "text": "Raise up your voices and carry the spark",
+   "start": 13.851,
+   "end": 16.774,
+   "choir": true
+  },
+  {
+   "line": 4,
+   "text": "Morning is calling my name from afar",
+   "start": 17.574,
+   "end": 19.951
+  },
+  {
+   "line": 5,
+   "text": "I will be waiting wherever you are",
+   "start": 20.501,
+   "end": 22.343
+  }
+ ]
+}

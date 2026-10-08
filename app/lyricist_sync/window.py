@@ -13,15 +13,17 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QC
                                QVBoxLayout, QWidget)
 
 import importlib
-from . import paths, theme as thememod, winfx
-from .formats import EXTS, build, build_base_name, encode_file, fmt_lrc_time, parse_time
+from . import chrome, paths, theme as thememod, winfx
+from .chrome import MARGIN, RADIUS
+from .export import SAVE_MODES, export_song, read_tags, target_dir  # noqa: F401  (re-exported for the CLI)
+from .formats import fmt_lrc_time, parse_time
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
 from .theme import ACCENT, display_family
-from .widgets import GlassCard, GlassProgress, GlassRowDelegate, PillButton, ReviewTable, STATE
+LOW_CONF = 0.6
+from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, PillButton, ReviewTable, STATE, AMBER
 
 meta = importlib.import_module(__package__)
-RADIUS = 16
-EDGE = 6  # resize grip width (px)
+SAVE_LABELS = {'beside': 'Next to the audio file', 'folder': 'A chosen folder', 'ask': 'Ask every time'}
 
 
 class CaptionButton(QPushButton):
@@ -62,7 +64,7 @@ class CaptionButton(QPushButton):
             p.drawRoundedRect(r, 1.5, 1.5)
 
 
-class GlassWindow(QWidget):
+class GlassWindow(QWidget, chrome.Frame):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
@@ -71,22 +73,26 @@ class GlassWindow(QWidget):
         self._cards = []
         self._drag = None
         self._resize = None
+        self.init_frame()
         self.setWindowTitle(meta.APP_NAME)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setMinimumSize(980, 640)
+        self.setMouseTracking(True)
         self.setAcceptDrops(True)
-        self.resize(1120, 760)
         self._build_ui()
+        self._apply_margins()
+        self.resize(1160 + 2 * self.margin(), 780 + 2 * self.margin())
         self._apply_theme()
-        self._backdrop = 'gradient'
-        if not app.screenshot:
-            self._fx_timer = self.startTimer(1)  # applied once the native window exists
 
     # ---------------------------------------------------------------- UI
+    def _apply_margins(self):
+        m = self.margin()
+        self._root.setContentsMargins(14 + m, 10 + m, 14 + m, 10 + m)
+        self.setMinimumSize(1000 + 2 * m, 660 + 2 * m)
+
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 10, 14, 10)
+        self._root = root
         root.setSpacing(10)
 
         bar = QHBoxLayout()
@@ -133,6 +139,9 @@ class GlassWindow(QWidget):
         foot.addStretch(1)
         self.status_lbl = QLabel('')
         self.status_lbl.setObjectName('sub')
+        self.status_lbl.setTextFormat(Qt.RichText)
+        self.status_lbl.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
+        self.status_lbl.linkActivated.connect(lambda u: QDesktopServices.openUrl(QUrl(u)))
         foot.addWidget(self.status_lbl)
         root.addLayout(foot)
 
@@ -171,23 +180,30 @@ class GlassWindow(QWidget):
             self.btn_add.clicked.connect(self._add_songs)
             self.btn_remove = PillButton('Remove')
             self.btn_remove.clicked.connect(self._remove_song)
+            self.btn_setdir = PillButton('Set folder for selected…')
+            self.btn_setdir.setToolTip('Choose where the lyric files of the selected songs are saved')
+            self.btn_setdir.clicked.connect(self._set_folder_selected)
             row.addWidget(self.btn_add)
             row.addWidget(self.btn_remove)
             row.addStretch(1)
+            row.addWidget(self.btn_setdir)
             lay.addLayout(row)
-            self.queue = QTableWidget(0, 3)
-            self.queue.setHorizontalHeaderLabels(['Song', 'Lyrics', 'Status'])
+            self.queue = QTableWidget(0, 4)
+            self.queue.setHorizontalHeaderLabels(['Song', 'Lyrics', 'Status', 'Output folder'])
             self.queue.verticalHeader().hide()
             self.queue.verticalHeader().setDefaultSectionSize(30)
             self.queue.setShowGrid(False)
             self.queue.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            self.queue.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            self.queue.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            self.queue.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.queue.customContextMenuRequested.connect(self._queue_menu)
             self.queue.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             self.queue.setWordWrap(False)
             hh = self.queue.horizontalHeader()
             hh.setSectionResizeMode(0, hh.ResizeMode.Stretch)
-            self.queue.setColumnWidth(1, 70)
-            self.queue.setColumnWidth(2, 130)
+            self.queue.setColumnWidth(1, 64)
+            self.queue.setColumnWidth(2, 124)
+            self.queue.setColumnWidth(3, 120)
             self.queue.setMouseTracking(True)
             self.queue.setItemDelegate(GlassRowDelegate(self.queue, progress_col=2))
             self.queue.itemSelectionChanged.connect(self._song_selected)
@@ -225,6 +241,24 @@ class GlassWindow(QWidget):
             self.lang.setToolTip('Language of the lyrics. Auto detects Greek, and lets Whisper decide otherwise.')
             top.addWidget(self.lang)
             lay.addLayout(top)
+            frow = QHBoxLayout()
+            self.song_dir_lbl = QLabel('')
+            self.song_dir_lbl.setObjectName('hint')
+            self.song_dir_lbl.setTextFormat(Qt.RichText)
+            self.song_dir_lbl.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
+            self.song_dir_lbl.linkActivated.connect(lambda u: QDesktopServices.openUrl(QUrl(u)))
+            self.btn_song_dir = PillButton('Change…')
+            self.btn_song_dir.setFixedWidth(96)
+            self.btn_song_dir.setToolTip('Output folder for this song only')
+            self.btn_song_dir.clicked.connect(self._change_song_dir)
+            self.btn_song_dir_reset = PillButton('Default')
+            self.btn_song_dir_reset.setFixedWidth(84)
+            self.btn_song_dir_reset.setToolTip('Use the "Save to" setting again for this song')
+            self.btn_song_dir_reset.clicked.connect(lambda: self._reset_song_dirs([self.app.current()]))
+            frow.addWidget(self.song_dir_lbl, 1)
+            frow.addWidget(self.btn_song_dir)
+            frow.addWidget(self.btn_song_dir_reset)
+            lay.addLayout(frow)
             self.lyrics = QPlainTextEdit()
             self.lyrics.setPlaceholderText('Paste the lyrics here, one line per sung line.\n'
                                            'Lines like [Chorus] or (x2) are ignored.\n'
@@ -242,21 +276,38 @@ class GlassWindow(QWidget):
                 b.clicked.connect(lambda _=False, d=d: self._nudge(d))
                 tools.addWidget(b)
             tools.addWidget(self.btn_play)
+            self.btn_resync = PillButton('⟲  Re-sync from here')
+            self.btn_resync.setToolTip('Keep this line where it is now (after you fixed it) and re-align only the lines after it')
+            self.btn_resync.clicked.connect(lambda: self._resync_row(self.review.currentRow()))
+            tools.addWidget(self.btn_resync)
             tools.addStretch(1)
+            self.low_lbl = QLabel('')
+            self.low_lbl.setObjectName('hint')
+            tools.addWidget(self.low_lbl)
             lay.addLayout(tools)
             self.review = ReviewTable()
             self.review.setMouseTracking(True)
             self.review.setItemDelegate(GlassRowDelegate(self.review))
             self.review.play_line.connect(self._play_row)
             self.review.itemChanged.connect(self._time_edited)
+            self.review.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.review.customContextMenuRequested.connect(self._review_menu)
             lay.addWidget(self.review, 1)
 
             exp = QHBoxLayout()
+            save_lbl = QLabel('Save to')
+            save_lbl.setObjectName('sub')
+            self.save_mode = QComboBox()
+            for k in SAVE_MODES:
+                self.save_mode.addItem(SAVE_LABELS[k], k)
+            self.save_mode.setToolTip('Where the lyric files go. A per-song folder (Change… / Set folder for selected…) always wins.')
             self.out_dir = QLineEdit()
             self.out_dir.setPlaceholderText('Output folder')
             self.out_dir.setReadOnly(True)
             self.btn_browse = PillButton('Browse…')
             self.btn_browse.clicked.connect(self._browse_out)
+            exp.addWidget(save_lbl)
+            exp.addWidget(self.save_mode)
             exp.addWidget(self.out_dir, 1)
             exp.addWidget(self.btn_browse)
             lay.addLayout(exp)
@@ -276,14 +327,19 @@ class GlassWindow(QWidget):
             lay.addLayout(checks)
             row = QHBoxLayout()
             self.btn_export = PillButton('Export', 'primary')
-            self.btn_export.clicked.connect(lambda: self.app.export_current())
+            self.btn_export.setToolTip('Export the selected synced songs (each to its own folder)')
+            self.btn_export.clicked.connect(lambda: self.app.export_selected())
             row.addWidget(self.btn_export)
             row.addStretch(1)
             self.btn_about = PillButton('About')
             self.btn_about.clicked.connect(self._about)
+            self.btn_update = IconPillButton('Update', 'update')
+            self.btn_update.setToolTip('Check for updates')
+            self.btn_update.clicked.connect(lambda: self.app.open_updates())
             self.btn_theme = PillButton('Light')
             self.btn_theme.clicked.connect(self._toggle_theme)
             row.addWidget(self.btn_theme)
+            row.addWidget(self.btn_update)
             row.addWidget(self.btn_about)
             lay.addLayout(row)
         return self._card(build)
@@ -293,28 +349,15 @@ class GlassWindow(QWidget):
         t = self.theme
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(self.rect())
+        body = self.body_rect()
+        rad = self.radius()
+        if self.margin():
+            chrome.paint_shadow(p, body, rad, t.dark)
+        chrome.paint_glass(p, body, rad, t, self._backdrop)
+        # Soft card shadows (stacked translucent rounded rects = cheap blur), clipped to the body.
         path = QPainterPath()
-        rad = 0 if self.isMaximized() else RADIUS
-        path.addRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
+        path.addRoundedRect(body, rad, rad)
         p.setClipPath(path)
-        g = QLinearGradient(0, 0, 0, self.height())
-        g.setColorAt(0, QColor(t.bg_top))
-        g.setColorAt(1, QColor(t.bg_bottom))
-        if self._backdrop == 'gradient':
-            p.fillPath(path, QBrush(g))
-        else:
-            p.fillPath(path, t.qcolor(t.tint))
-        for c, pos in ((t.glow1, (0.15, 0.0)), (t.glow2, (0.95, 0.25))):
-            gg = QLinearGradient(self.width() * pos[0], self.height() * pos[1],
-                                 self.width() * (pos[0] + 0.5), self.height() * (pos[1] + 0.6))
-            col = QColor(*c)
-            gg.setColorAt(0, col)
-            col2 = QColor(col)
-            col2.setAlpha(0)
-            gg.setColorAt(1, col2)
-            p.fillPath(path, QBrush(gg))
-        # Soft card shadows (stacked translucent rounded rects = cheap blur).
         p.setPen(Qt.NoPen)
         for card in self._cards:
             if not card.isVisible():
@@ -326,10 +369,6 @@ class GlassWindow(QWidget):
                 p.setBrush(sh)
                 p.drawRoundedRect(g0.adjusted(-i, -i + 6, i, i + 6), card.radius + i, card.radius + i)
         p.setClipping(False)
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QColor(255, 255, 255, 46 if t.dark else 200), 1))
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
 
     def _apply_theme(self):
         t = self.theme
@@ -348,55 +387,35 @@ class GlassWindow(QWidget):
             return
         self._fx_done = True
         hwnd = int(self.winId())
-        winfx.enable_native_frame(hwnd)
-        build = winfx.build()
-        if build >= 22000 and winfx.set_mica(hwnd, self.theme.dark):
-            self._backdrop = 'mica'
-        elif winfx.set_acrylic(hwnd, 0xB0141820 if self.theme.dark else 0xC8F4F6FA):
-            self._backdrop = 'acrylic'
-            winfx.set_round_region(hwnd, self.width(), self.height(), RADIUS)
+        if self._mode == 'win11':
+            winfx.enable_native_frame(hwnd, dwm_frame=True)
+            if not winfx.set_mica(hwnd, self.theme.dark):
+                self._mode, self._backdrop = 'painted', 'painted'   # no Mica: painted glass + painted shadow
+                winfx.enable_native_frame(hwnd, dwm_frame=False)
+                self._apply_margins()
+        else:
+            winfx.enable_native_frame(hwnd, dwm_frame=False)
         self.update()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if self._backdrop == 'acrylic' and not self.isMaximized():
-            winfx.set_round_region(int(self.winId()), self.width(), self.height(), RADIUS)
 
     def changeEvent(self, e):
         from PySide6.QtCore import QEvent
-        if e.type() == QEvent.WindowStateChange and self._backdrop == 'acrylic':
-            winfx.set_round_region(int(self.winId()), self.width(), self.height(), 0 if self.isMaximized() else RADIUS)
+        if e.type() == QEvent.WindowStateChange:
+            self._apply_margins()   # no shadow margin while maximized
+            self.update()
         super().changeEvent(e)
 
     def _toggle_max(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
 
     def _hit(self, pos):
-        x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
-        if self.isMaximized():
-            return self._caption_hit(pos)
-        l, r, t, b = x < EDGE, x > w - EDGE, y < EDGE, y > h - EDGE
-        if t and l:
-            return winfx.HTTOPLEFT
-        if t and r:
-            return winfx.HTTOPRIGHT
-        if b and l:
-            return winfx.HTBOTTOMLEFT
-        if b and r:
-            return winfx.HTBOTTOMRIGHT
-        if l:
-            return winfx.HTLEFT
-        if r:
-            return winfx.HTRIGHT
-        if t:
-            return winfx.HTTOP
-        if b:
-            return winfx.HTBOTTOM
+        edge = self.edge_hit(pos.x(), pos.y())
+        if edge is not None:
+            return edge
         return self._caption_hit(pos)
 
     def _caption_hit(self, pos):
         """Empty title-bar area acts as the native caption (drag, Aero Snap, double-click)."""
-        if pos.y() < 46:
+        if pos.y() < self.margin() + 46:
             child = self.childAt(pos)
             if not isinstance(child, (QPushButton, QComboBox, QLineEdit)) and not (
                     isinstance(child, QLabel) and child.objectName() == 'footer'):
@@ -421,12 +440,14 @@ class GlassWindow(QWidget):
 
     def mousePressEvent(self, e):
         # Windows uses the native hit-test above; this path serves other platforms.
+        if e.button() == Qt.LeftButton and self._hit(e.position().toPoint()) == winfx.HTTRANSPARENT:
+            return
         if e.button() == Qt.LeftButton and self._hit(e.position().toPoint()) == winfx.HTCAPTION:
             if self.windowHandle() is None or not self.windowHandle().startSystemMove():
                 self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
         elif e.button() == Qt.LeftButton and not winfx.IS_WIN:
             hit = self._hit(e.position().toPoint())
-            if hit != winfx.HTCLIENT:
+            if hit not in (winfx.HTCLIENT, winfx.HTTRANSPARENT):
                 self._resize = (hit, e.globalPosition().toPoint(), self.geometry())
 
     def mouseMoveEvent(self, e):
@@ -456,7 +477,7 @@ class GlassWindow(QWidget):
         self._drag = self._resize = None
 
     def mouseDoubleClickEvent(self, e):
-        if e.position().y() < 46:
+        if self._hit(e.position().toPoint()) == winfx.HTCAPTION:
             self._toggle_max()
 
     def dragEnterEvent(self, e):
@@ -467,7 +488,18 @@ class GlassWindow(QWidget):
         self.app.add_songs([u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()])
 
     # ---------------------------------------------------------------- queue / review
+    def _dir_display(self, song):
+        d = target_dir(song, self.app.settings)
+        if d is None:
+            return 'Ask on export', ''
+        if getattr(song, 'out_dir', None):
+            return '★ ' + (os.path.basename(d.rstrip('\\/')) or d), d + '  (set for this song)'
+        if self.app.settings.get('save_mode', 'beside') == 'beside':
+            return 'Next to audio', d
+        return os.path.basename(d.rstrip('\\/')) or d, d
+
     def refresh_queue(self, songs, current):
+        self._loading = True
         self.queue.setRowCount(len(songs))
         for i, s in enumerate(songs):
             self.queue.setItem(i, 0, QTableWidgetItem(s.label()))
@@ -475,9 +507,50 @@ class GlassWindow(QWidget):
             st = QTableWidgetItem(s.status)
             st.setToolTip(s.status)
             self.queue.setItem(i, 2, st)
+            txt, tip = self._dir_display(s)
+            di = QTableWidgetItem(txt)
+            di.setToolTip(tip)
+            self.queue.setItem(i, 3, di)
         if 0 <= current < len(songs):
-            self.queue.selectRow(current)
+            sel = set(self.selected_rows())
+            if current not in sel:
+                self.queue.selectRow(current)
+        self._loading = False
         self._update_buttons()
+
+    def refresh_dirs(self):
+        for i, s in enumerate(self.app.songs):
+            it = self.queue.item(i, 3)
+            if it:
+                txt, tip = self._dir_display(s)
+                it.setText(txt)
+                it.setToolTip(tip)
+        self._show_song_dir(self.app.current())
+
+    def selected_rows(self):
+        sm = self.queue.selectionModel()
+        return sorted(r.row() for r in sm.selectedRows()) if sm else []
+
+    def selected_songs(self):
+        return [self.app.songs[r] for r in self.selected_rows() if r < len(self.app.songs)]
+
+    def _show_song_dir(self, song):
+        if not song:
+            self.song_dir_lbl.setText('')
+            self.btn_song_dir.setEnabled(False)
+            self.btn_song_dir_reset.setVisible(False)
+            return
+        d = target_dir(song, self.app.settings)
+        self.btn_song_dir.setEnabled(True)
+        self.btn_song_dir_reset.setVisible(bool(getattr(song, 'out_dir', None)))
+        if d is None:
+            self.song_dir_lbl.setText('Output folder: asked when you export')
+            return
+        el = self.song_dir_lbl.fontMetrics().elidedText(d, Qt.ElideMiddle, 420)
+        url = QUrl.fromLocalFile(d).toString()
+        self.song_dir_lbl.setText('Output folder: <a href="%s">%s</a>%s' % (url, el.replace('<', '&lt;'),
+                                  ' &nbsp;(this song)' if getattr(song, 'out_dir', None) else ''))
+        self.song_dir_lbl.setToolTip(d)
 
     def show_song(self, song):
         self._loading = True
@@ -486,8 +559,10 @@ class GlassWindow(QWidget):
         idx = self.lang.findData(song.lang if song else 'auto')
         self.lang.setCurrentIndex(max(0, idx))
         self.review.setRowCount(0)
+        self.low_lbl.setText('')
         if song and song.result:
             self._fill_review(song)
+        self._show_song_dir(song)
         self._loading = False
         self._update_buttons()
 
@@ -495,34 +570,60 @@ class GlassWindow(QWidget):
         lines = song.result['lines']
         self.review.blockSignals(True)
         self.review.setRowCount(len(lines))
+        low = 0
         for i, l in enumerate(lines):
+            conf = l.get('conf')
+            is_low = conf is not None and conf < LOW_CONF
+            low += is_low
+            why = l.get('why') or []
+            tip = ('Confidence %d%%' % round(conf * 100) if conf is not None else 'Confidence: n/a') + \
+                  ((' — ' + '; '.join(why)) if why else '')
+            if is_low:
+                tip += '\nCheck this line: play it, nudge or type the start, then “Re-sync from here” for the lines after it.'
             play = QTableWidgetItem('▶')
             play.setTextAlignment(Qt.AlignCenter)
             play.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            play.setToolTip('Play from this line')
             self.review.setItem(i, 0, play)
             txt = QTableWidgetItem(('↻ ' if l.get('repeat') else '') + l['text'])
             txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            txt.setToolTip(tip)
             self.review.setItem(i, 1, txt)
             st = QTableWidgetItem(fmt_lrc_time(l['start']))
             st.setTextAlignment(Qt.AlignCenter)
             st.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+            st.setToolTip(tip)
             self.review.setItem(i, 2, st)
             en = QTableWidgetItem(fmt_lrc_time(l['end']))
             en.setTextAlignment(Qt.AlignCenter)
             en.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.review.setItem(i, 3, en)
-            note = l.get('flag') or ('placed' if l.get('guessed') else '')
+            if is_low:
+                note = '● check'
+            elif l.get('manual'):
+                note = '✎ fixed'
+            else:
+                note = l.get('flag') or ('placed' if l.get('guessed') else '')
             nt = QTableWidgetItem(note)
             nt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if note:
-                nt.setForeground(QColor('#e0a106'))
+            nt.setToolTip(tip)
+            nt.setData(Qt.UserRole, 'low' if is_low else '')
+            if note and note != '✎ fixed':
+                nt.setForeground(QColor(AMBER))
             self.review.setItem(i, 4, nt)
         self.review.blockSignals(False)
+        self.low_lbl.setText(('<span style="color:%s">●</span> %d line%s to check' % (AMBER, low, '' if low == 1 else 's')) if low else '')
 
     def _song_selected(self):
-        rows = self.queue.selectionModel().selectedRows()
-        if rows and not getattr(self, '_loading', False):
-            self.app.select(rows[0].row())
+        if getattr(self, '_loading', False):
+            return
+        r = self.queue.currentRow()
+        rows = self.selected_rows()
+        if r not in rows and rows:
+            r = rows[0]
+        if r >= 0:
+            self.app.select(r)
+        self._update_buttons()
 
     def _lyrics_edited(self):
         if not getattr(self, '_loading', False):
@@ -530,14 +631,97 @@ class GlassWindow(QWidget):
 
     def _update_buttons(self):
         busy = self.app.busy
-        has = self.app.current() is not None
-        synced = bool(has and self.app.current().result)
+        cur = self.app.current()
+        has = cur is not None
+        synced = bool(has and cur.result)
         for b in (self.btn_add, self.btn_remove, self.btn_sync, self.btn_all):
             b.setEnabled(not busy)
-        self.btn_sync.setEnabled(not busy and has and bool(split_lines(self.app.current().lyrics)))
+        self.btn_sync.setEnabled(not busy and has and bool(split_lines(cur.lyrics)))
         self.btn_all.setEnabled(not busy and any(split_lines(s.lyrics) for s in self.app.songs))
-        self.btn_export.setEnabled(synced and not busy)
+        sel = self.selected_songs() if hasattr(self, 'queue') else []
+        self.btn_export.setEnabled(not busy and (synced or any(s.result for s in sel)))
+        self.btn_setdir.setEnabled(bool(sel))
+        self.btn_resync.setEnabled(synced and not busy and self.review.currentRow() >= 0)
         self.btn_cancel.setVisible(busy)
+        self.btn_browse.setEnabled(self.save_mode.currentData() == 'folder')
+        self.out_dir.setEnabled(self.save_mode.currentData() == 'folder')
+
+    def _queue_menu(self, pos):
+        songs = self.selected_songs()
+        if not songs:
+            return
+        m = QMenu(self)
+        m.addAction('Set output folder for %s…' % ('this song' if len(songs) == 1 else '%d songs' % len(songs)),
+                    self._set_folder_selected)
+        if any(getattr(s, 'out_dir', None) for s in songs):
+            m.addAction('Use the "Save to" setting again', lambda: self._reset_song_dirs(songs))
+        d = target_dir(songs[0], self.app.settings)
+        if d and os.path.isdir(d):
+            m.addAction('Open output folder', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(d)))
+        m.addSeparator()
+        m.addAction('Remove', self._remove_song)
+        m.exec(self.queue.viewport().mapToGlobal(pos))
+
+    def _pick_dir(self, title, start):
+        return QFileDialog.getExistingDirectory(self, title, start or os.path.expanduser('~'))
+
+    def _set_folder_selected(self):
+        songs = self.selected_songs()
+        if not songs:
+            return
+        start = target_dir(songs[0], self.app.settings) or self.app.settings.get('out_dir', '')
+        d = self._pick_dir('Output folder for %d song%s' % (len(songs), '' if len(songs) == 1 else 's'), start)
+        if d:
+            self.app.set_song_dirs(songs, d)
+
+    def _change_song_dir(self):
+        s = self.app.current()
+        if not s:
+            return
+        d = self._pick_dir('Output folder for “%s”' % s.label(), target_dir(s, self.app.settings) or '')
+        if d:
+            self.app.set_song_dirs([s], d)
+
+    def _reset_song_dirs(self, songs):
+        self.app.set_song_dirs([s for s in songs if s], None)
+
+    def _review_menu(self, pos):
+        row = self.review.rowAt(pos.y())
+        if row < 0:
+            return
+        self.review.selectRow(row)
+        m = QMenu(self)
+        m.addAction('▶  Play from this line', lambda: self._play_row(row))
+        a = m.addAction('⟲  Re-sync from this line', lambda: self._resync_row(row))
+        a.setEnabled(not self.app.busy)
+        m.exec(self.review.viewport().mapToGlobal(pos))
+
+    def _resync_row(self, row):
+        song = self.app.current()
+        if not song or not song.result or row < 0 or self.app.busy:
+            return
+        self.app.resync(song, row)
+
+    def show_export_result(self, folders, nfiles, skipped=0):
+        links = ' · '.join('<a href="%s">%s</a>' % (QUrl.fromLocalFile(d).toString(),
+                                                     (os.path.basename(d.rstrip('\\/')) or d).replace('<', '&lt;'))
+                           for d in folders[:4])
+        more = ' +%d' % (len(folders) - 4) if len(folders) > 4 else ''
+        txt = 'Exported %d file%s' % (nfiles, '' if nfiles == 1 else 's')
+        if skipped:
+            txt += ', skipped %d song%s' % (skipped, '' if skipped == 1 else 's')
+        self.status_lbl.setText(txt + ((' · Open folder: ' + links + more) if links else ''))
+
+    def ask_conflict(self, song, existing, state):
+        """Overwrite / Keep both / Skip, with 'apply to all' (remembered in state for this export)."""
+        if state.get('all'):
+            return state['all']
+        from .dialogs import ConflictDialog
+        d = ConflictDialog(self, song.label(), existing)
+        d.exec()
+        if d.apply_all.isChecked():
+            state['all'] = d.choice
+        return d.choice
 
     def set_busy(self, busy, stage='', pct=0.0):
         self.progress.set_value(pct)
@@ -600,27 +784,43 @@ class GlassWindow(QWidget):
 
     # ---------------------------------------------------------------- export UI
     def _browse_out(self):
-        d = QFileDialog.getExistingDirectory(self, 'Output folder', self.out_dir.text() or os.path.expanduser('~'))
+        d = self._pick_dir('Output folder', self.out_dir.text())
         if d:
             self.out_dir.setText(d)
             self.app.settings['out_dir'] = d
             self.app.save_settings()
+            self.refresh_dirs()
+
+    def _save_mode_changed(self, _i):
+        if getattr(self, '_loading_settings', False):
+            return
+        mode = self.save_mode.currentData()
+        if mode == 'folder' and not self.app.settings.get('out_dir'):
+            self._browse_out()
+        self._set('save_mode', mode)
+        self._update_buttons()
+        self.refresh_dirs()
 
     def export_options(self):
-        return {'dir': self.out_dir.text().strip(), 'formats': [f for f, c in self.fmt_checks.items() if c.isChecked()],
-                'bom': self.bom.isChecked()}
+        return {'formats': [f for f, c in self.fmt_checks.items() if c.isChecked()], 'bom': self.bom.isChecked()}
 
     def load_settings(self, s):
+        self._loading_settings = True
         self.out_dir.setText(s.get('out_dir', ''))
+        self.save_mode.setCurrentIndex(max(0, self.save_mode.findData(s.get('save_mode', 'beside'))))
         for f, c in self.fmt_checks.items():
             c.setChecked(f in s.get('formats', ['ttml', 'lrc', 'srt', 'vtt']))
         self.bom.setChecked(bool(s.get('bom', False)))
         self.auto_export.setChecked(bool(s.get('auto_export', False)))
+        self._loading_settings = False
+        self.save_mode.currentIndexChanged.connect(self._save_mode_changed)
         self.bom.toggled.connect(lambda v: self._set('bom', v))
         self.auto_export.toggled.connect(lambda v: self._set('auto_export', v))
         for c in self.fmt_checks.values():
             c.toggled.connect(lambda _v: self._set('formats', [f for f, cc in self.fmt_checks.items() if cc.isChecked()]))
         self.lang.currentIndexChanged.connect(lambda _i: self._lyrics_edited())
+        self.review.itemSelectionChanged.connect(self._update_buttons)
+        self._update_buttons()
 
     def _set(self, key, value):
         self.app.settings[key] = value
@@ -635,9 +835,9 @@ class GlassWindow(QWidget):
             self.app.add_songs(files)
 
     def _remove_song(self):
-        rows = self.queue.selectionModel().selectedRows()
-        if rows:
-            self.app.remove_song(rows[0].row())
+        rows = self.selected_rows()
+        for r in sorted(rows, reverse=True):
+            self.app.remove_song(r)
 
     # ---------------------------------------------------------------- theme / about
     def _toggle_theme(self):
@@ -647,8 +847,6 @@ class GlassWindow(QWidget):
         self._apply_theme()
         if self._backdrop == 'mica':
             winfx.set_mica(int(self.winId()), self.theme.dark)
-        elif self._backdrop == 'acrylic':
-            winfx.set_acrylic(int(self.winId()), 0xB0141820 if self.theme.dark else 0xC8F4F6FA)
 
     def _about(self):
         from .dialogs import AboutDialog
@@ -662,36 +860,3 @@ class GlassWindow(QWidget):
             self.app.cancel()
         self.player.stop()
         super().closeEvent(e)
-
-
-def export_song(song, options, meta_extra=None):
-    """Write the chosen formats for one synced song. Returns the list of files written."""
-    out_dir = options['dir']
-    os.makedirs(out_dir, exist_ok=True)
-    info = {'filename': os.path.basename(song.path), 'title': song.tags.get('title', ''), 'artist': song.tags.get('artist', '')}
-    base = build_base_name(info)
-    lines = [{'text': l['text'], 'time': l['start'], 'end': l['end'] + 0.4} for l in song.result['lines']]
-    m = {'ti': info['title'], 'ar': info['artist'], 'al': song.tags.get('album', ''), 'lang': song.iso}
-    written = []
-    for fmt in options['formats']:
-        path = os.path.join(out_dir, base + EXTS[fmt])
-        text = build(fmt, lines, m, song.result.get('duration'))
-        with open(path, 'wb') as f:
-            f.write(encode_file(text, bom=(fmt == 'srt' and options.get('bom'))))
-        written.append(path)
-    return written
-
-
-def read_tags(path):
-    tags = {}
-    try:
-        from mutagen import File
-        f = File(path, easy=True)
-        if f and f.tags:
-            for k in ('title', 'artist', 'album'):
-                v = f.tags.get(k)
-                if v:
-                    tags[k] = str(v[0])
-    except Exception:
-        pass
-    return tags

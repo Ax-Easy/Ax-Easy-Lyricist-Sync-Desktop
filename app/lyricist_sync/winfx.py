@@ -7,7 +7,7 @@ import sys
 
 IS_WIN = os.name == 'nt'
 WM_NCCALCSIZE, WM_NCHITTEST, WM_NCACTIVATE = 0x0083, 0x0084, 0x0086
-HTCLIENT, HTCAPTION = 1, 2
+HTCLIENT, HTCAPTION, HTTRANSPARENT = 1, 2, -1
 HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 10, 11, 12, 13, 14, 15, 16, 17
 
 
@@ -52,7 +52,9 @@ def _abgr(argb):
 
 
 def set_acrylic(hwnd, tint_argb=0xB0141820, enable=True):
-    """Windows 10 1803+: ACCENT_ENABLE_ACRYLICBLURBEHIND with a tint (ARGB)."""
+    """Windows 10 1803+: ACCENT_ENABLE_ACRYLICBLURBEHIND with a tint (ARGB).
+    Not used since 1.1.0: it blurs the whole rectangular window (square edges outside the
+    rounded corners). Kept for reference/diagnostics."""
     if not IS_WIN:
         return False
     try:
@@ -98,8 +100,11 @@ def set_round_region(hwnd, w, h, radius):
         return False
 
 
-def enable_native_frame(hwnd):
-    """Add the style bits Windows needs for Aero Snap, Win+arrows, min/max animations."""
+def enable_native_frame(hwnd, dwm_frame=False):
+    """Add the style bits Windows needs for Aero Snap, Win+arrows, min/max animations.
+    dwm_frame: extend the DWM frame (Windows 11 path only: Mica + DWM shadow). On the
+    painted Windows 10 path it must stay off, or DWM draws a rectangular shadow/edge
+    around the transparent shadow margin."""
     if not IS_WIN:
         return False
     try:
@@ -109,9 +114,12 @@ def enable_native_frame(hwnd):
         st = user32.GetWindowLongPtrW(h, GWL_STYLE)
         user32.SetWindowLongPtrW(h, GWL_STYLE, st | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
         user32.SetWindowPos(h, None, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004 | 0x0010)  # FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE
-        if dwm is not None and build() < 22000:
-            m = MARGINS(0, 0, 1, 0)  # keeps the DWM drop shadow on Windows 10
+        if dwm is not None and dwm_frame:
+            m = MARGINS(-1, -1, -1, -1)
             dwm.DwmExtendFrameIntoClientArea(h, ctypes.byref(m))
+        elif dwm is not None:
+            pol = ctypes.c_int(1)  # DWMNCRP_DISABLED: no DWM non-client rendering (no square shadow)
+            dwm.DwmSetWindowAttribute(h, 2, ctypes.byref(pol), 4)
         return True
     except Exception:
         return False
