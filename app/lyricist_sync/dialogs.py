@@ -294,6 +294,7 @@ class SetupDialog(GlassDialog):
         self._log_n = 0
         self._phase = 0
         self.latency = {}          # step -> max event-loop lateness (ms)
+        self.lat_spikes = []       # every lateness > 100 ms, for the CI report
         self._lat_last = None
         self.rows = {}
         self._new_state()
@@ -336,6 +337,8 @@ class SetupDialog(GlassDialog):
         if self._lat_last is not None and self.thread is not None:
             late = (now - self._lat_last) * 1000 - 50
             sid = self.state.current or 'idle'
+            if late > 100 and len(self.lat_spikes) < 50:
+                self.lat_spikes.append({'step': sid, 'at_s': round(time.time() - self._t0, 1), 'ms': round(late, 1)})
             if late > self.latency.get(sid, 0):
                 self.latency[sid] = round(late, 1)
         self._lat_last = now

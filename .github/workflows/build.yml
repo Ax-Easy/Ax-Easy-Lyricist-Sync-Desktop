@@ -185,7 +185,7 @@ jobs:
           $env:LYRICIST_SYNC_HOME = "$env:RUNNER_TEMP\fetch-home"
           python tools/fetch_mirror.py cpu mirror
           if ($LASTEXITCODE -ne 0) { throw "mirror fetch failed" }
-      - name: First-run setup in the GUI (CPU build) from a throttled local mirror; event-loop latency per step
+      - name: First-run setup in the GUI (CPU build, Windows 10 window path) from a throttled local mirror; event-loop latency per step
         shell: pwsh
         run: |
           $torch = (Get-ChildItem mirror\torch-*.whl | Select-Object -First 1).Name
@@ -194,7 +194,7 @@ jobs:
           $env:LYRICIST_SYNC_MIRROR = 'http://127.0.0.1:8765/'
           $env:LYRICIST_SYNC_STALL = '20'
           $t = Get-Date
-          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--setup-gui','--auto','--variant','cpu','--report','setup-gui.json','--shots','setup-shots' -Wait -PassThru -NoNewWindow
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--setup-gui','--force-win10-style','--auto','--variant','cpu','--report','setup-gui.json','--shots','setup-shots' -Wait -PassThru -NoNewWindow
           Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
           Get-Content setup-gui.json
           "setup took $([int]((Get-Date) - $t).TotalSeconds) s"

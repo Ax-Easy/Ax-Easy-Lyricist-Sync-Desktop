@@ -65,16 +65,19 @@ def render_alpha(widget):
 
 
 def _banner(p, w, text, dark):
+    """Label strip at the top; wraps onto a second line when the text is long."""
     f = QFont()
     f.setPointSizeF(10.5)
     f.setBold(True)
     p.setFont(f)
-    r = QRectF(16, 12, w - 32, 30)
+    flags = Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap
+    need = p.boundingRect(QRectF(0, 0, w - 56, 200), flags, text)
+    r = QRectF(16, 10, w - 32, max(30, need.height() + 12))
     path = QPainterPath()
     path.addRoundedRect(r, 10, 10)
     p.fillPath(path, QColor(0, 0, 0, 150) if dark else QColor(255, 255, 255, 200))
     p.setPen(QColor('#ffffff') if dark else QColor('#14171F'))
-    p.drawText(r.adjusted(12, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
+    p.drawText(r.adjusted(12, 0, -12, 0), flags, text)
 
 
 def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=False):
