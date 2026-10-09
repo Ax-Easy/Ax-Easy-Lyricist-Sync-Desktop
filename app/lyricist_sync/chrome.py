@@ -1,6 +1,9 @@
 """Window chrome for the frameless glass windows and dialogs.
 
-Two code paths, chosen once per process:
+Three code paths, chosen once per process:
+  'mac'     macOS main window: the real title bar with the traffic lights over a full-size
+            content view, behind-window vibrancy (NSVisualEffectView) under a translucent tint;
+            the system rounds the corners and draws the shadow. Dialogs use 'painted'.
   'win11'   Windows 11 (build >= 22000): DWM rounded corners + Mica + the DWM shadow.
   'painted' Windows 10 and everything else (and --force-win10-style): no window-wide
             acrylic (it blurs the whole rectangle and shows square edges); the window is
@@ -13,7 +16,7 @@ import random
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPixmap, QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 
-from . import winfx
+from . import macfx, winfx
 
 RADIUS = 16
 MARGIN = 20          # transparent shadow margin (px) on the painted path
@@ -21,6 +24,8 @@ FORCE_WIN10 = os.environ.get('LYRICIST_SYNC_FORCE_WIN10') == '1'
 
 
 def mode():
+    if macfx.IS_MAC:
+        return 'mac'
     if not FORCE_WIN10 and winfx.IS_WIN and winfx.build() >= 22000:
         return 'win11'
     return 'painted'
@@ -33,6 +38,8 @@ def force_win10(on=True):
 
 def label():
     """Honest description of the active code path (for screenshots/About)."""
+    if mode() == 'mac':
+        return 'macOS path: native title bar (traffic lights) + vibrancy (NSVisualEffectView)'
     if mode() == 'win11':
         return 'Windows 11 path: DWM rounded corners + Mica + DWM shadow'
     if FORCE_WIN10 and winfx.IS_WIN and winfx.build() >= 22000:
@@ -83,7 +90,7 @@ def paint_glass(p, body, radius, theme, backdrop, glows=True):
     path.addRoundedRect(body, radius, radius)
     p.save()
     p.setClipPath(path)
-    if backdrop == 'mica':
+    if backdrop in ('mica', 'vibrancy'):
         p.fillPath(path, t.qcolor(t.tint))
     else:
         g = QLinearGradient(body.topLeft(), body.bottomRight())
@@ -102,7 +109,7 @@ def paint_glass(p, body, radius, theme, backdrop, glows=True):
             col2.setAlpha(0)
             rg.setColorAt(1, col2)
             p.fillPath(path, QBrush(rg))
-    if backdrop != 'mica':
+    if backdrop not in ('mica', 'vibrancy'):
         p.fillPath(path, QBrush(noise()))
         sheen = QLinearGradient(body.x(), body.y(), body.x(), body.y() + min(140.0, body.height() * 0.3))
         sheen.setColorAt(0, QColor(255, 255, 255, 22 if t.dark else 70))
@@ -124,8 +131,11 @@ class Frame:
     EDGE = 4       # resize band inside the visible edge (px)
     EDGE_OUT = 8   # ...and outside it, like the invisible borders of native Windows 10 windows
 
-    def init_frame(self):
+    def init_frame(self, native=False):
+        """native: the main window (macOS: real title bar + vibrancy). Dialogs stay painted on a Mac."""
         self._mode = mode()
+        if self._mode == 'mac' and not native:
+            self._mode = 'painted'
         self._backdrop = 'mica' if self._mode == 'win11' else 'painted'
 
     def margin(self):
@@ -134,6 +144,8 @@ class Frame:
         return MARGIN
 
     def radius(self):
+        if self._mode == 'mac':   # the system clips the window to its own rounded corners
+            return 0
         return 0 if (self.isMaximized() or self.isFullScreen()) else RADIUS
 
     def body_rect(self):

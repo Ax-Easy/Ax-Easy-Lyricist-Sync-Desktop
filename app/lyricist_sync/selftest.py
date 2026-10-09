@@ -38,12 +38,21 @@ def run(report_path=None):
 
     tmp = tempfile.mkdtemp(prefix='lsync-selftest-')
     os.environ['LYRICIST_SYNC_HOME'] = os.path.join(tmp, 'home')
-    from . import VERSION, bootstrap, paths
+    from . import VERSION, bootstrap, macfx, paths
     from .formats import build
 
     def manifest():
         m = bootstrap.manifest()
         assert len(m['wheels']) > 30 and len(m['models']) >= 3
+        if macfx.IS_MAC:   # both Mac stacks present; this Mac gets its own
+            arm, x86 = bootstrap.manifest('arm64'), bootstrap.manifest('x86_64')
+            assert list(arm['torch']) == ['mps'] and list(x86['torch']) == ['cpu']
+            assert any(w['name'].startswith('torch-2.5.1') and 'arm64' in w['name'] for w in arm['torch']['mps'])
+            assert any(w['name'].startswith('torch-2.2.2') and 'x86_64' in w['name'] for w in x86['torch']['cpu'])
+            assert 'aarch64-apple-darwin' in arm['python']['name'] and 'x86_64-apple-darwin' in x86['python']['name']
+            v = bootstrap.variants()[0]
+            return {'arch': macfx.machine_arch(), 'variant': v, 'gb': round(bootstrap.total_size(v) / 1e9, 2),
+                    'python': m['python']['name']}
         return {'cuda_gb': round(bootstrap.total_size('cuda') / 1e9, 2), 'cpu_gb': round(bootstrap.total_size('cpu') / 1e9, 2)}
     check('manifest', manifest)
 
@@ -142,7 +151,7 @@ def run(report_path=None):
         with open(os.path.join(tmp, 'Τραγούδι δοκιμής.ttml'), 'rb') as f:
             data = f.read()
             assert data[:5] == b'<?xml' and b'xml:lang="el"' in data
-        assert 'Open folder' in win.status_lbl.text() and 'href=' in win.status_lbl.text(), win.status_lbl.text()
+        assert macfx.FOLDER_LABEL in win.status_lbl.text() and 'href=' in win.status_lbl.text(), win.status_lbl.text()
         return {'files': names, 'platform': qapp.platformName()}
     check('gui_export', gui)
 
@@ -302,6 +311,15 @@ def run(report_path=None):
         win = ctx['app'].win
         m = win.margin()
         out = {'mode': win._mode, 'path': chrome.label(), 'margin': m, 'radius': win.radius()}
+        if macfx.IS_MAC:
+            assert win._mode == 'mac' and m == 0 and win.radius() == 0, out
+            assert not win.btn_close.isVisible() and not win.btn_max.isVisible(), 'custom caption buttons on a Mac'
+            assert not (win.windowFlags() & Qt.FramelessWindowHint), 'Mac window must keep the native title bar'
+            out.update(titlebar=bool(getattr(win, '_mac_titlebar', False)), backdrop=win._backdrop,
+                       vibrancy=bool(getattr(win, '_vibrancy', None)))
+            if qapp.platformName() == 'cocoa':
+                assert out['titlebar'], 'full-size content view / transparent title bar not applied'
+            return out
         if win._mode == 'painted':
             assert m == chrome.MARGIN and win.radius() == chrome.RADIUS
             b = win.body_rect()
@@ -341,8 +359,8 @@ def run(report_path=None):
     def multimedia():
         win = ctx['app'].win
         ok = win.player.isAvailable()
-        if qapp.platformName() == 'windows':
-            assert ok, 'QtMultimedia backend (FFmpeg) not available: play-from-line would not work'
+        if qapp.platformName() in ('windows', 'cocoa'):
+            assert ok, 'QtMultimedia backend not available: play-from-line would not work'
         return {'player': bool(win.player), 'available': ok}
     check('multimedia', multimedia)
 
@@ -361,6 +379,52 @@ def run(report_path=None):
         d.hide()
         return 'ok'
     check('about_setup_dialogs', about)
+
+    def mac_native():
+        """macOS: menu bar (app menu roles, ⌘ shortcuts), ⌫ deletes a line, Quit goes through the
+        unsaved-lyrics check, Finder wording."""
+        if not macfx.IS_MAC:
+            return 'skipped (not macOS)'
+        from PySide6.QtGui import QAction, QKeySequence
+        app, win = ctx['app'], ctx['app'].win
+        a = win.mac_actions
+        roles = {k: a[k].menuRole() for k in ('about', 'updates', 'settings', 'quit')}
+        assert roles['about'] == QAction.AboutRole and roles['quit'] == QAction.QuitRole and roles['settings'] == QAction.PreferencesRole
+        sc = {k: a[k].shortcut().toString(QKeySequence.PortableText) for k in a}
+        assert sc['quit'] == 'Ctrl+Q' and sc['settings'] == 'Ctrl+,' and sc['undo'] == 'Ctrl+Z', sc
+        assert sc['redo'] in ('Ctrl+Shift+Z', 'Shift+Ctrl+Z'), sc['redo']
+        assert sc['export'] == 'Ctrl+S' and sc['add'] == 'Ctrl+O', sc
+        assert a['fullscreen'].shortcut() == QKeySequence(QKeySequence.FullScreen) and not a['fullscreen'].shortcut().isEmpty()
+        assert macfx.FOLDER_LABEL == 'Reveal in Finder'
+        s = app.current()
+        had = (s.result, s.dirty)
+        # ⌫ deletes the selected line (Delete on Windows), undoable
+        s.result = json.loads(json.dumps(RESULT))
+        win.show_song(s)
+        n = win.review.rowCount()
+        win.review.setFocus()
+        win.review.selectRow(1)
+        assert win.handle_key(Qt.Key_Backspace) and win.review.rowCount() == n - 1, (n, win.review.rowCount())
+        win.undo()
+        bs = win.review.rowCount() == n
+        assert bs, 'undo after ⌫'
+        # Quit (⌘Q) with unsaved lyrics: Cancel keeps the window open
+        s.result = s.result or json.loads(json.dumps(RESULT))
+        s.dirty = True
+        asked = []
+        real = win.ask_unsaved
+        win.ask_unsaved = lambda songs, action='close': asked.append(len(songs)) or 'cancel'
+        try:
+            a['quit'].trigger()
+            qapp.processEvents()
+            assert asked and win.isVisible(), ('quit did not ask about unsaved lyrics', asked)
+        finally:
+            win.ask_unsaved = real
+            s.result, s.dirty = had
+        return {'roles': {k: str(v).split('.')[-1] for k, v in roles.items()}, 'shortcuts': {k: sc[k] for k in
+                ('quit', 'settings', 'undo', 'redo', 'export', 'add', 'fullscreen')},
+                'menus': [m.text() for m in win.menubar.actions()], 'backspace_deletes': bs}
+    check('mac_native', mac_native)
 
     def native():
         from . import winfx
@@ -505,28 +569,35 @@ def run(report_path=None):
         out = {'normal': normal.getRect(), 'avail': win.screen().availableGeometry().getRect(),
                'screen': win.screen().geometry().getRect(), 'platform': qapp.platformName()}
 
+        mac = macfx.IS_MAC
+
         def check_fill(tag, want):
-            g = win.geometry()
+            g = win.frameGeometry() if mac else win.geometry()
             out[tag] = g.getRect()
             if winfx.IS_WIN:
                 out[tag + '_native'] = winfx.native_rects(int(win.winId()))
             assert win.margin() == 0 and win.radius() == 0, (tag, win.margin(), win.radius())
-            assert all(abs(a - b) <= 2 for a, b in zip(g.getRect(), want.getRect())), (tag, g.getRect(), want.getRect())
+            if mac:   # zoom / full-screen space are the system's: it fills (nearly) the whole area
+                assert g.width() >= want.width() * 0.9 and g.height() >= want.height() * 0.85, (tag, g.getRect(), want.getRect())
+            else:
+                assert all(abs(a - b) <= 2 for a, b in zip(g.getRect(), want.getRect())), (tag, g.getRect(), want.getRect())
             sz = sizes()
             out[tag + '_sizes'] = sz
             if want.width() > normal.width() + 40 and want.height() > normal.height() + 40:
                 for k in sz:   # everything stretched, nothing left at its old size
                     assert sz[k][0] > n_sizes[k][0] and sz[k][1] >= n_sizes[k][1], (tag, k, sz[k], n_sizes[k])
 
+        T = 3.0 if mac else 1.0   # macOS animates zoom and full screen
         win._toggle_max()
-        pump(1.0, lambda: win.isMaximized() and win.geometry() == win.screen().availableGeometry())
-        pump(0.2)
+        pump(T, lambda: win.isMaximized() and win.geometry() == win.screen().availableGeometry())
+        pump(0.2 if not mac else 1.0)
         assert win.isMaximized()
         check_fill('maximized', win.screen().availableGeometry())
         win._toggle_max()
-        pump(1.0, lambda: not win.isMaximized() and win.geometry() == normal)
+        pump(T, lambda: not win.isMaximized() and win.geometry() == normal)
+        pump(0.0 if not mac else 0.8)
         out['restored'] = win.geometry().getRect()
-        assert all(abs(a - b) <= 2 for a, b in zip(win.geometry().getRect(), normal.getRect())), (out['restored'], normal.getRect())
+        assert all(abs(a - b) <= (2 if not mac else 30) for a, b in zip(win.geometry().getRect(), normal.getRect())), (out['restored'], normal.getRect())
         if winfx.IS_WIN and qapp.platformName() == 'windows':
             winfx.show_window(int(win.winId()), 3)      # SW_MAXIMIZE: what Win+Up and snap-to-top do
             pump(1.0, lambda: win.isMaximized() and win.geometry() == win.screen().availableGeometry())
@@ -538,12 +609,13 @@ def run(report_path=None):
             out['native_restored'] = win.geometry().getRect()
             assert all(abs(a - b) <= 2 for a, b in zip(win.geometry().getRect(), normal.getRect())), out['native_restored']
         win._toggle_full()
-        pump(1.0, lambda: win.isFullScreen() and win.geometry() == win.screen().geometry())
-        pump(0.2)
+        pump(T, lambda: win.isFullScreen() and win.geometry() == win.screen().geometry())
+        pump(0.2 if not mac else 1.5)
         assert win.isFullScreen()
         check_fill('fullscreen', win.screen().geometry())
         win._toggle_full()
-        pump(1.0, lambda: not win.isFullScreen() and win.geometry() == normal)
+        pump(T, lambda: not win.isFullScreen() and win.geometry() == normal)
+        pump(0.0 if not mac else 1.5)
         out['after_fullscreen'] = win.geometry().getRect()
         assert not win.isFullScreen() and not win.isMaximized()
         out['healed'] = getattr(win, '_healed', 0)
@@ -558,11 +630,16 @@ def run(report_path=None):
             assert got == want, (gb, got)
             out[str(gb)] = got
         assert bootstrap.whisper_tier(24.0, 'cpu') == 'small'
+        # Macs: Apple Silicon by unified memory, Intel by RAM
+        mac = {gb: bootstrap.whisper_tier(gb, 'mps') for gb in (8.0, 16.0, 18.0, 24.0, 32.0, 36.0, 64.0)}
+        assert list(mac.values()) == ['small', 'medium', 'medium', 'large-v3-turbo', 'large-v3', 'large-v3', 'large-v3'], mac
+        assert bootstrap.whisper_tier(16.0, 'mac-cpu') == 'small' and bootstrap.whisper_tier(32.0, 'mac-cpu') == 'medium'
+        out['mac'] = {str(k): v for k, v in mac.items()}
         assert bootstrap.parse_smi('NVIDIA GeForce RTX 3090, 591.44, 24576')['vram_gb'] == 24.0
         sizes = {n: m['size'] for n, m in bootstrap.whisper_models().items()}
         assert list(sizes) == ['small', 'medium', 'large-v3-turbo', 'large-v3'], sizes
         for t in sizes:
-            wh = [i for i in bootstrap.plan('cuda', whisper=t) if i['kind'] == 'model' and bootstrap.model_group(i) == 'whisper']
+            wh = [i for i in bootstrap.plan(bootstrap.variants()[0], whisper=t) if i['kind'] == 'model' and bootstrap.model_group(i) == 'whisper']
             assert len(wh) == 1 and wh[0]['size'] == sizes[t]
         return out
     check('whisper_tiers', tiers)
@@ -815,7 +892,7 @@ def run(report_path=None):
         assert isinstance(d, ExportDoneDialog) and d.isVisible() and not d.isModal()
         assert export_summary(app.last_export) == '4 files saved for 1 song', export_summary(app.last_export)
         assert out in d.details.toPlainText() and '.lrc' in d.details.toPlainText()
-        assert (d.btn_open.text(), d.btn_ok.text()) == ('Open folder', 'OK') and d.btn_open.isEnabled()
+        assert (d.btn_open.text(), d.btn_ok.text()) == (macfx.FOLDER_LABEL, 'OK') and d.btn_open.isEnabled()
         assert not s.dirty and not win.queue.item(app.cur, 0).text().startswith('●')
         d.btn_ok.click()
         assert not d.isVisible()

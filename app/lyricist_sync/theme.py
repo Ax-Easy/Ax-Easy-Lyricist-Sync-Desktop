@@ -128,6 +128,11 @@ QLineEdit#editText {{ font-size: 14px; padding: 8px 12px; }}
 
 
 def ui_font():
+    import sys
+    if sys.platform == 'darwin':   # San Francisco (the system font) at the standard macOS size
+        f = QFont()
+        f.setPointSizeF(13)
+        return f
     fams = set(QFontDatabase.families())
     for name in ('Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', 'Inter', 'Noto Sans', 'DejaVu Sans'):
         if name in fams:

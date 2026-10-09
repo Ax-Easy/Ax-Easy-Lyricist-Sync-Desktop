@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QTextBrowser, QVBoxLayout, QWidget
 
-from . import bootstrap, chrome, paths, updater, winfx
+from . import bootstrap, chrome, macfx, paths, updater, winfx
 from .theme import ACCENT
 from .widgets import AMBER, GlassProgress, PillButton, STATE
 
@@ -240,7 +240,13 @@ class SetupDialog(GlassDialog):
         intro = ('One-time setup. Python, PyTorch and the AI models go into <b>%s</b>. '
                  'Pause any time; it continues where it stopped, also after a restart.' % paths.home())
         self.lay.addWidget(link_label(intro, 'plain'))
-        if self.gpu['nvidia']:
+        if self.gpu.get('apple'):
+            g = 'Apple Silicon: <b>%s</b> · %g GB unified memory → PyTorch with Metal (MPS) GPU acceleration.' % (
+                self.gpu['name'] or 'Apple', self.gpu.get('memory_gb') or 0)
+        elif bootstrap.IS_MAC:
+            g = 'Intel Mac: <b>%s</b> · %g GB memory → CPU build (PyTorch 2.2, the last for Intel Macs; about 2–3 minutes per song).' % (
+                self.gpu['name'] or 'Intel', self.gpu.get('memory_gb') or 0)
+        elif self.gpu['nvidia']:
             g = 'NVIDIA GPU found: <b>%s</b>%s%s → CUDA build recommended.' % (
                 self.gpu['name'] or 'NVIDIA', (' · %g GB VRAM' % self.gpu['vram_gb']) if self.gpu.get('vram_gb') else '',
                 (' (driver %s)' % self.gpu['driver']) if self.gpu['driver'] else '')
@@ -249,10 +255,13 @@ class SetupDialog(GlassDialog):
         g += ' Whisper model for this hardware: <b>%s</b> (change any time in Engine settings).' % self.tier(rec)
         self.lay.addWidget(link_label(g, 'sub'))
         self.variant = QComboBox()
-        for v, label in (('cuda', 'CUDA 12.4 (NVIDIA GPU) + Whisper %s  ·  %.2f GB download'),
-                         ('cpu', 'CPU only + Whisper %s  ·  %.2f GB download')):
-            self.variant.addItem(label % (self.tier(v), bootstrap.total_size(v, whisper=self.tier(v)) / 1e9), v)
-        self.variant.setCurrentIndex(0 if rec == 'cuda' else 1)
+        labels = {'cuda': 'CUDA 12.4 (NVIDIA GPU) + Whisper %s  ·  %.2f GB download',
+                  'cpu': ('Intel Mac (CPU) + Whisper %s  ·  %.2f GB download' if bootstrap.IS_MAC
+                          else 'CPU only + Whisper %s  ·  %.2f GB download'),
+                  'mps': 'Apple Silicon (Metal GPU) + Whisper %s  ·  %.2f GB download'}
+        for v in bootstrap.variants():
+            self.variant.addItem(labels[v] % (self.tier(v), bootstrap.total_size(v, whisper=self.tier(v)) / 1e9), v)
+        self.variant.setCurrentIndex(max(0, self.variant.findData(rec)))
         self.variant.currentIndexChanged.connect(lambda _i: self._new_state())
         self.lay.addWidget(self.variant)
         self.bar = GlassProgress()
@@ -277,8 +286,8 @@ class SetupDialog(GlassDialog):
         row = QHBoxLayout()
         self.btn_log = PillButton('Show log ▾')
         self.btn_log.clicked.connect(lambda: self._toggle_log(not self.logview.isVisible()))
-        self.btn_folder = PillButton('Open log folder')
-        self.btn_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(paths.home())))
+        self.btn_folder = PillButton('Show log in Finder' if macfx.IS_MAC else 'Open log folder')
+        self.btn_folder.clicked.connect(lambda: macfx.open_folder(paths.home()))
         row.addWidget(self.btn_log)
         row.addWidget(self.btn_folder)
         row.addStretch(1)
@@ -320,6 +329,8 @@ class SetupDialog(GlassDialog):
     def tier(self, variant):
         """Whisper size this setup installs: by VRAM for CUDA, small on CPU (only that one is downloaded)."""
         forced = os.environ.get('LYRICIST_SYNC_WHISPER_TIER')
+        if bootstrap.IS_MAC:
+            return forced or bootstrap.whisper_tier(self.gpu.get('memory_gb'), bootstrap.tier_variant(variant))
         return forced or bootstrap.whisper_tier(self.gpu.get('vram_gb'), variant)
 
     # -- state
@@ -765,9 +776,17 @@ class UpdateDialog(GlassDialog):
             self._set_buttons('failed_dl')
             return
         try:
-            updater.run_installer(path, relaunch=True)
+            r = updater.run_installer(path, relaunch=True)
         except Exception as e:
             self._failed('Could not start the installer: %s' % e)
+            return
+        if updater.IS_MAC and isinstance(r, tuple) and r[0] == 'manual':
+            # read-only location (or App Translocation): the verified DMG is open in Finder
+            self.app._closing_ok = False
+            self.info.setText('Signature and notarization verified. The new version is open in Finder: drag '
+                              '<b>Lyricist Sync</b> onto <b>Applications</b> (Replace), then quit this copy (⌘Q) '
+                              'and start the new one.')
+            self._set_buttons('failed_dl')
             return
         self.app.quit_for_update()
 
@@ -793,15 +812,26 @@ class EngineDialog(GlassDialog):
         self.thread = None
         self._result = None
         hw = self.hw
-        if hw['variant'] == 'cuda':
+        if hw.get('mac') and hw['variant'] == 'mps':
+            h = 'Apple Silicon: <b>%s</b> · %g GB unified memory · Metal (MPS) build · Whisper runs in fp32%s' % (
+                hw['gpu'] or 'Apple', hw['memory_gb'] or 0, ' · <span style="color:%s">GPU not available on this macOS (needs 12.3+): using the CPU</span>' % AMBER
+                if hw.get('device') == 'cpu' else '')
+        elif hw.get('mac'):
+            h = 'Intel Mac: <b>%s</b> · %g GB memory · CPU build · Whisper runs in fp32' % (hw['cpu'] or 'this Mac', hw['memory_gb'] or 0)
+        elif hw['variant'] == 'cuda':
             h = 'GPU: <b>%s</b>%s · CUDA build · Whisper runs in fp16' % (
                 hw['gpu'] or 'NVIDIA GPU', (' · %g GB VRAM' % hw['vram_gb']) if hw['vram_gb'] else '')
         else:
             h = 'CPU: <b>%s</b> · CPU build · Whisper runs in fp32' % (hw['cpu'] or 'this PC')
         self.lay.addWidget(link_label('<b>Detected hardware</b><br>' + h, 'plain'))
-        self.lay.addWidget(link_label('Recommended for this hardware: <b>Whisper %s</b>  (CPU or under 6 GB → small · 6–11 GB → medium · '
-                                      '12–23 GB → large-v3-turbo · 24 GB and up → large-v3). Demucs and the MMS aligner are the same '
-                                      'on every tier.' % hw['tier'], 'sub'))
+        if hw.get('mac') and hw['variant'] == 'mps':
+            rule = '8 GB → small · 16 GB → medium · 24 GB → large-v3-turbo · 32 GB and up → large-v3, by unified memory'
+        elif hw.get('mac'):
+            rule = 'Intel Macs run on the CPU: small · 32 GB and up → medium'
+        else:
+            rule = 'CPU or under 6 GB → small · 6–11 GB → medium · 12–23 GB → large-v3-turbo · 24 GB and up → large-v3'
+        self.lay.addWidget(link_label('Recommended for this hardware: <b>Whisper %s</b>  (%s). Demucs and the MMS aligner are the same '
+                                      'on every tier.' % (hw['tier'], rule), 'sub'))
         self.current = link_label('', 'plain')
         self.lay.addWidget(self.current)
         self.lay.addWidget(link_label('<b>Whisper model</b> (Transcribe and repeat detection)', 'plain'))
@@ -859,7 +889,8 @@ class EngineDialog(GlassDialog):
         self.combo.setCurrentIndex(max(0, self.combo.findData(choice)))
         self.combo.blockSignals(False)
         eff = self.app.whisper_effective()
-        prec = 'fp16 on CUDA' if self.hw['variant'] == 'cuda' else 'fp32 on CPU'
+        prec = 'fp16 on CUDA' if self.hw['variant'] == 'cuda' else 'fp32 on the Apple GPU (Metal)' if (
+            self.hw['variant'] == 'mps' and self.hw.get('device') != 'cpu') else 'fp32 on CPU'
         note = ''
         want = tier if choice == 'auto' else choice
         if want != eff:
@@ -1262,7 +1293,7 @@ class ExportDoneDialog(GlassDialog):
         self.spacer.setVisible(not self.details.isVisible())
         row = QHBoxLayout()
         row.addStretch(1)
-        self.btn_open = PillButton('Open folder')
+        self.btn_open = PillButton(macfx.FOLDER_LABEL)
         self.btn_open.setAutoDefault(False)
         self.btn_open.setEnabled(bool(self.folders))
         self.btn_open.setToolTip('\n'.join(self.folders))
@@ -1283,12 +1314,12 @@ class ExportDoneDialog(GlassDialog):
 
     def _open(self):
         if len(self.folders) == 1:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self.folders[0]))
+            macfx.open_folder(self.folders[0])
             return
         from PySide6.QtWidgets import QMenu
         m = QMenu(self)
         for d in self.folders:
-            m.addAction(d, lambda d=d: QDesktopServices.openUrl(QUrl.fromLocalFile(d)))
+            m.addAction(d, lambda d=d: macfx.open_folder(d))
         m.exec(self.btn_open.mapToGlobal(self.btn_open.rect().bottomLeft()))
 
 

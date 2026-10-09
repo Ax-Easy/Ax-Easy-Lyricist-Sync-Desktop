@@ -2,7 +2,13 @@
 
 update.json: {"version": "1.1.0", "date": "2026-10-09", "notes": "markdown or plain text",
               "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.1.0.exe",
-              "sha256": "<64 hex>", "size": 41000000, "minimum_os": "10.0.17763"}
+              "sha256": "<64 hex>", "size": 41000000, "minimum_os": "10.0.17763",
+              "mac": {"url": "https://.../AxEasy-LyricistSync-1.3.1-mac-universal.dmg", "sha256": "<64 hex>",
+                      "size": 150000000, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
+The top level is the Windows installer (what 1.1-1.3 read); a Mac reads the "mac" entry. On a Mac
+the update is a notarized DMG: after the SHA256 check the app mounts it, checks the new app's
+signature (same Developer ID team) and Gatekeeper assessment, and either replaces itself in place
+(when its folder is writable) or opens the DMG for a drag to Applications.
 Only HTTPS is accepted (plain HTTP on 127.0.0.1/localhost only when LYRICIST_SYNC_UPDATE_TEST=1,
 for the CI test server). Downloads resume and are SHA256-verified before anything runs.
 No Qt here: the GUI and the CLI test share it."""
@@ -22,6 +28,8 @@ import urllib.request
 from . import paths
 
 DEFAULT_URL = 'https://www.ax-easy.com/lyricist-sync/update.json'
+IS_MAC = sys.platform == 'darwin'
+TEAM_ID = '7BMSHL4YZ6'           # Developer ID team that signs the Mac app
 UA = 'AxEasy-LyricistSync-Updater'
 INSTALL_ARGS = ['/SILENT', '/SUPPRESSMSGBOXES', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', '/NORESTART']
 
@@ -90,7 +98,10 @@ def check(current, url=None, timeout=10):
         return res
     try:
         m = json.loads(data.decode('utf-8-sig'))
-        m = validate(m)
+        if IS_MAC and isinstance(m, dict) and not isinstance(m.get('mac'), dict):
+            res.update(status='notfound', message='Version %s has no Mac download yet. Please try again later.' % m.get('version', '?'))
+            return res
+        m = validate(for_platform(m))
     except (ValueError, UpdateError) as e:
         res.update(status='invalid', message='The update information on the server is not valid (%s).' % e)
         return res
@@ -98,11 +109,29 @@ def check(current, url=None, timeout=10):
     if m.get('minimum_os') and os.name == 'nt' and os_build() < parse_version(m['minimum_os'])[:3]:
         res.update(status='current', message='Version %s needs Windows %s or newer.' % (m['version'], m['minimum_os']))
         return res
+    if m.get('minimum_os') and IS_MAC:
+        from . import macfx
+        mo = m['minimum_os']
+        if isinstance(mo, dict):
+            mo = mo.get(macfx.machine_arch()) or max(mo.values(), key=parse_version)
+        if macfx.macos_version() < parse_version(mo)[:3]:
+            res.update(status='current', message='Version %s needs macOS %s or newer on this Mac.' % (m['version'], mo))
+            return res
     if is_newer(m['version'], current):
         res.update(status='available', message='Version %s is available.' % m['version'])
     else:
         res.update(status='current', message="You're up to date.")
     return res
+
+
+def for_platform(m, mac=None):
+    """The entry for this platform: the top level (Windows) or the top level overlaid with "mac"."""
+    mac = IS_MAC if mac is None else mac
+    if not isinstance(m, dict) or not mac:
+        return m
+    out = {k: v for k, v in m.items() if k not in ('mac', 'minimum_os')}
+    out.update(m.get('mac') or {})
+    return out
 
 
 def validate(m):
@@ -134,10 +163,11 @@ def updates_dir():
 
 
 def installer_name(m):
-    name = os.path.basename(urllib.parse.urlparse(m['url']).path) or 'LyricistSync-Setup.exe'
+    ext = '.dmg' if IS_MAC else '.exe'
+    name = os.path.basename(urllib.parse.urlparse(m['url']).path) or ('LyricistSync-Setup' + ext)
     name = re.sub(r'[^A-Za-z0-9._-]+', '_', name)
-    if not name.lower().endswith('.exe'):
-        name += '.exe'
+    if not name.lower().endswith(ext):
+        name += ext
     return name
 
 
@@ -222,9 +252,11 @@ def download(m, on_progress=None, cancel=None, retries=5):
 
 
 def run_installer(path, relaunch=True, wait=False, extra=None):
-    """Start the Inno Setup installer silently. The installer closes this app if needed,
+    """Mac: install_mac() (DMG). Windows: start the Inno Setup installer silently. The installer closes this app if needed,
     keeps everything in %LOCALAPPDATA%\\Ax-Easy\\LyricistSync (settings, engine, models)
     and, with relaunch, starts the new version when it's done."""
+    if IS_MAC:
+        return install_mac(path, relaunch=relaunch)
     if not os.path.exists(path):
         raise UpdateError('The installer file is missing.')
     args = [path] + INSTALL_ARGS + (['/RELAUNCH=1'] if relaunch else []) + list(extra or [])
@@ -236,6 +268,106 @@ def run_installer(path, relaunch=True, wait=False, extra=None):
     if wait:
         return p.wait()
     return p
+
+
+# ---------------------------------------------------------------- macOS: DMG install
+def current_bundle():
+    """/Applications/Lyricist Sync.app when running from a bundle, else None."""
+    exe = os.path.realpath(sys.executable)
+    i = exe.find('.app/Contents/MacOS/')
+    return exe[:i + 4] if i > 0 else None
+
+
+def _run(args, timeout=120):
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+
+
+def mount_dmg(path):
+    """hdiutil attach (read-only, not shown in Finder) -> mount point."""
+    import plistlib
+    r = subprocess.run(['/usr/bin/hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-plist', path],
+                       capture_output=True, timeout=300)
+    if r.returncode != 0:
+        raise UpdateError('The downloaded disk image could not be opened (%s).' % r.stderr.decode('utf-8', 'replace').strip()[:200])
+    for e in plistlib.loads(r.stdout).get('system-entities', []):
+        if e.get('mount-point'):
+            return e['mount-point']
+    raise UpdateError('The downloaded disk image has no volume.')
+
+
+def detach(mount):
+    try:
+        _run(['/usr/bin/hdiutil', 'detach', '-quiet', mount], 60)
+    except Exception:
+        pass
+
+
+def verify_app(app):
+    """The new app must be intact, signed by our Developer ID team and accepted by Gatekeeper
+    (notarized). -> dict of what was checked. Raises UpdateError."""
+    r = _run(['/usr/bin/codesign', '--verify', '--deep', '--strict', app], 300)
+    if r.returncode != 0:
+        raise UpdateError('The new version failed the code signature check, so it was not installed.')
+    info = _run(['/usr/bin/codesign', '-dv', '--verbose=2', app]).stderr
+    team = re.search(r'^TeamIdentifier=(\S+)', info, re.M)
+    if not team or team.group(1) != TEAM_ID:
+        raise UpdateError('The new version is not signed by Ax-Easy, so it was not installed.')
+    gk = _run(['/usr/sbin/spctl', '--assess', '--type', 'execute', '-vv', app], 300)
+    ok_gk = gk.returncode == 0
+    if not ok_gk and os.environ.get('LYRICIST_SYNC_UPDATE_TEST') != '1':
+        raise UpdateError('macOS Gatekeeper did not accept the new version (%s).' % gk.stderr.strip()[:200])
+    return {'signature': True, 'team': team.group(1), 'gatekeeper': gk.stderr.strip()[:300], 'gatekeeper_ok': ok_gk}
+
+
+def install_mac(dmg, relaunch=True, target=None):
+    """Mount the verified DMG, verify the app inside, then replace this app in place when its
+    folder is writable (a helper waits for this process to quit, swaps the bundles, relaunches).
+    Otherwise (read-only location, App Translocation, another user's /Applications) the DMG is
+    opened in Finder to drag the app to Applications. -> ('replaced'|'manual', details)"""
+    if not os.path.exists(dmg):
+        raise UpdateError('The disk image is missing.')
+    mount = mount_dmg(dmg)
+    try:
+        apps = [os.path.join(mount, f) for f in os.listdir(mount) if f.endswith('.app')]
+        if not apps:
+            raise UpdateError('The disk image has no app in it.')
+        new = apps[0]
+        checks = verify_app(new)
+        target = target or current_bundle()
+        if not target or '/AppTranslocation/' in target or not os.access(os.path.dirname(target), os.W_OK) \
+                or (os.path.exists(target) and not os.access(target, os.W_OK)):
+            detach(mount)
+            subprocess.Popen(['/usr/bin/open', dmg])
+            return 'manual', dict(checks, target=target)
+        staged = os.path.join(os.path.dirname(target), '.%s.update' % os.path.basename(target))
+        subprocess.run(['/bin/rm', '-rf', staged])
+        r = _run(['/usr/bin/ditto', new, staged], 900)
+        if r.returncode != 0:
+            raise UpdateError('Could not copy the new version (%s).' % r.stderr.strip()[:200])
+        verify_app(staged)
+    finally:
+        detach(mount)
+    old = os.path.join(updates_dir(), 'previous.app')
+    script = os.path.join(updates_dir(), 'swap.sh')
+    with open(script, 'w') as f:
+        f.write('#!/bin/sh\n'
+                '# Lyricist Sync update: wait for the app to quit, swap the bundles, start the new one.\n'
+                'pid=%d\n'
+                'for i in $(seq 1 600); do kill -0 $pid 2>/dev/null || break; sleep 0.2; done\n'
+                'rm -rf %s\n'
+                'if mv %s %s && mv %s %s; then rm -rf %s; echo "update swapped"; else\n'
+                '  [ -e %s ] || mv %s %s; echo "update swap failed"; fi\n'
+                '%s\n' % (os.getpid(), _q(old), _q(target), _q(old), _q(staged), _q(target), _q(old),
+                           _q(target), _q(old), _q(target), ('/usr/bin/open %s' % _q(target)) if relaunch else ''))
+    os.chmod(script, 0o755)
+    log = open(os.path.join(updates_dir(), 'swap.log'), 'a')
+    subprocess.Popen(['/bin/sh', script], stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    return 'replaced', dict(checks, target=target)
+
+
+def _q(p):
+    import shlex
+    return shlex.quote(p)
 
 
 def cleanup(keep=None):

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QC
                                QAbstractSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
 import importlib
-from . import chrome, edits, instrumental, paths, theme as thememod, winfx
+from . import chrome, edits, instrumental, macfx, paths, theme as thememod, winfx
 from .player import INST, AudioCache, Waveform, fmt_clock
 from .chrome import MARGIN, RADIUS
 from .export import SAVE_MODES, export_song, read_tags, target_dir  # noqa: F401  (re-exported for the CLI)
@@ -84,9 +84,12 @@ class GlassWindow(QWidget, chrome.Frame):
         self._cards = []
         self._drag = None
         self._resize = None
-        self.init_frame()
+        self.init_frame(native=True)
         self.setWindowTitle(meta.APP_NAME)
-        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        if self._mode == 'mac':   # the real title bar: traffic lights, green-button full screen, window tiling
+            self.setWindowFlags(Qt.Window)
+        else:
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -98,6 +101,13 @@ class GlassWindow(QWidget, chrome.Frame):
     # ---------------------------------------------------------------- UI
     def _apply_margins(self):
         m = self.margin()
+        if self._mode == 'mac':   # the header row sits in the title bar strip, next to the traffic lights
+            top = 0 if self.isFullScreen() else 3
+            self._root.setContentsMargins(14, top, 14, 10)
+            self._traffic.changeSize(0 if self.isFullScreen() else macfx.TRAFFIC_W - 14, 1)
+            self._root.invalidate()
+            self.setMinimumSize(1000, 660)
+            return
         self._root.setContentsMargins(14 + m, 10 + m, 14 + m, 10 + m)
         self.setMinimumSize(1000 + 2 * m, 660 + 2 * m)
 
@@ -108,6 +118,8 @@ class GlassWindow(QWidget, chrome.Frame):
 
         bar = QHBoxLayout()
         bar.setSpacing(8)
+        self._traffic = QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Minimum)
+        bar.addItem(self._traffic)   # macOS: room for the traffic lights
         ico = QLabel()
         ico.setPixmap(self._icon_pixmap(22))
         self.title_lbl = QLabel(meta.APP_NAME)
@@ -130,6 +142,7 @@ class GlassWindow(QWidget, chrome.Frame):
         self.btn_close.clicked.connect(self.close)
         for b in (self.btn_min, self.btn_max, self.btn_close):
             bar.addWidget(b)
+            b.setVisible(self._mode != 'mac')   # macOS: the native traffic lights do this
         root.addLayout(bar)
 
         body = QHBoxLayout()
@@ -175,6 +188,8 @@ class GlassWindow(QWidget, chrome.Frame):
         self._tick.setInterval(33)
         self._tick.timeout.connect(self._update_playhead)
         QShortcut(QKeySequence(Qt.Key_F11), self, self._toggle_full)
+        if self._mode == 'mac':
+            self._build_mac_menu()
         QApplication.instance().installEventFilter(self)
 
     def _link_label(self, html):
@@ -503,9 +518,12 @@ class GlassWindow(QWidget, chrome.Frame):
     # ---------------------------------------------------------------- window chrome
     def showEvent(self, e):
         super().showEvent(e)
-        if getattr(self, '_fx_done', False) or self.app.screenshot:
+        if getattr(self, '_fx_done', False) or (self.app.screenshot and self._mode != 'mac'):
             return
         self._fx_done = True
+        if self._mode == 'mac':
+            self._mac_native()
+            return
         hwnd = int(self.winId())
         if self._mode == 'win11':
             winfx.enable_native_frame(hwnd, dwm_frame=True)
@@ -540,7 +558,7 @@ class GlassWindow(QWidget, chrome.Frame):
     def _heal_geometry(self):
         """Maximized/full screen but not covering the target area (a frameless window can end up
         moved to the corner at its old size): put it there. Logged for the selftest."""
-        if not (self.isMaximized() or self.isFullScreen()):
+        if not (self.isMaximized() or self.isFullScreen()) or self._mode == 'mac':   # native zoom / full-screen space
             return
         want = self.target_geometry()
         got = self.geometry()
@@ -577,6 +595,8 @@ class GlassWindow(QWidget, chrome.Frame):
             self.showFullScreen()
 
     def _hit(self, pos):
+        if self._mode == 'mac':   # macOS resizes the window from its edges itself
+            return self._caption_hit(pos)
         edge = self.edge_hit(pos.x(), pos.y())
         if edge is not None:
             return edge
@@ -931,7 +951,7 @@ class GlassWindow(QWidget, chrome.Frame):
             m.addAction('Use the "Save to" setting again', lambda: self._reset_song_dirs(songs))
         d = target_dir(songs[0], self.app.settings)
         if d and os.path.isdir(d):
-            m.addAction('Open output folder', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(d)))
+            m.addAction('Reveal output folder in Finder' if macfx.IS_MAC else 'Open output folder', lambda: macfx.open_folder(d))
         m.addSeparator()
         m.addAction('Remove', self._remove_song)
         m.exec(self.queue.viewport().mapToGlobal(pos))
@@ -1046,7 +1066,7 @@ class GlassWindow(QWidget, chrome.Frame):
             txt += ', skipped %d song%s' % (skipped, '' if skipped == 1 else 's')
         if failed:
             txt += ', %d failed' % failed
-        self.status_lbl.setText(txt + ((' · Open folder: ' + links + more) if links else ''))
+        self.status_lbl.setText(txt + ((' · %s: ' % macfx.FOLDER_LABEL + links + more) if links else ''))
 
     def ask_conflict(self, song, existing, state):
         """Overwrite / Keep both / Skip, with 'apply to all' (remembered in state for this export)."""
@@ -1080,6 +1100,9 @@ class GlassWindow(QWidget, chrome.Frame):
             return
         if info.get('device') == 'cuda':
             self.device_lbl.setText('●  CUDA · %s' % info.get('device_name', 'NVIDIA GPU'))
+            self.device_lbl.setStyleSheet('color: #3ecf8e;')
+        elif info.get('device') == 'mps':
+            self.device_lbl.setText('●  Metal · %s' % info.get('device_name', 'Apple GPU'))
             self.device_lbl.setStyleSheet('color: #3ecf8e;')
         elif info.get('device') == 'cpu':
             self.device_lbl.setText('●  CPU%s' % ('' if not info.get('note') else ' · ' + info['note']))
@@ -1619,8 +1642,8 @@ class GlassWindow(QWidget, chrome.Frame):
         if k == Qt.Key_S and has and self.review.currentRow() >= 0:
             self.stamp()
             return True
-        if k == Qt.Key_Delete and has and not in_queue:
-            return self.delete_line()
+        if (k == Qt.Key_Delete or (k == Qt.Key_Backspace and macfx.IS_MAC)) and has and not in_queue:
+            return self.delete_line()   # Delete; on a Mac the ⌫ key
         if k == Qt.Key_F2 and has and not in_queue:
             return self.edit_line()
         if k in (Qt.Key_Return, Qt.Key_Enter) and has and not in_queue and QApplication.focusWidget() is self.review:
@@ -1703,10 +1726,93 @@ class GlassWindow(QWidget, chrome.Frame):
         self._apply_theme()
         if self._backdrop == 'mica':
             winfx.set_mica(int(self.winId()), self.theme.dark)
+        if self._mode == 'mac':
+            macfx.set_appearance(self, self.theme.dark)
 
     def _about(self):
         from .dialogs import AboutDialog
         AboutDialog(self).exec()
+
+    # ---------------------------------------------------------------- macOS
+    def _mac_native(self):
+        """Real title bar (traffic lights) over the glass, behind-window vibrancy, Aqua/Dark Aqua."""
+        self._mac_titlebar = macfx.native_titlebar(self)
+        self._vibrancy = None if os.environ.get('LYRICIST_SYNC_NO_VIBRANCY') == '1' else macfx.add_vibrancy(self)
+        if self._vibrancy:
+            self._backdrop = 'vibrancy'
+        macfx.set_appearance(self, self.theme.dark)
+        self.update()
+
+    def _build_mac_menu(self):
+        """The macOS menu bar: app menu (About, Check for Updates…, Settings… ⌘,, Quit ⌘Q through the
+        unsaved-work check), File, Edit, View (Enter Full Screen ⌃⌘F), Window and Help."""
+        from PySide6.QtGui import QAction
+        from PySide6.QtWidgets import QMenuBar
+        macfx.disable_auto_fullscreen_item()
+        self.menubar = mb = QMenuBar(None)    # parentless: the global macOS menu bar
+        self.mac_actions = acts = {}
+
+        def act(menu, key, text, slot, shortcut=None, role=None):
+            a = QAction(text, self)
+            if shortcut is not None:
+                a.setShortcut(QKeySequence(shortcut))
+            if role is not None:
+                a.setMenuRole(role)
+            a.triggered.connect(lambda _c=False: slot())
+            menu.addAction(a)
+            acts[key] = a
+            return a
+
+        app_menu = mb.addMenu('Lyricist Sync')   # the roles below move into the application menu
+        act(app_menu, 'about', 'About Lyricist Sync', self._about, role=QAction.AboutRole)
+        act(app_menu, 'updates', 'Check for Updates…', lambda: self.app.open_updates(), role=QAction.ApplicationSpecificRole)
+        act(app_menu, 'settings', 'Settings…', lambda: self.app.open_engine(), QKeySequence.Preferences, QAction.PreferencesRole)
+        act(app_menu, 'quit', 'Quit Lyricist Sync', self.close, QKeySequence.Quit, QAction.QuitRole)
+
+        f = mb.addMenu('File')
+        act(f, 'add', 'Add Songs…', self._add_songs, QKeySequence.Open)
+        act(f, 'export', 'Export Selected', lambda: self.app.export_selected(), QKeySequence.Save)
+        f.addSeparator()
+        act(f, 'sync', 'Auto-sync', lambda: self.app.sync_current(), 'Ctrl+R')
+        act(f, 'transcribe', 'Transcribe', lambda: self.app.transcribe_current(), 'Ctrl+Shift+T')
+        f.addSeparator()
+        act(f, 'remove', 'Remove Song', self._remove_song)
+        act(f, 'close', 'Close Window', self.close, QKeySequence.Close)
+
+        e = mb.addMenu('Edit')
+        act(e, 'undo', 'Undo', lambda: self._menu_edit('undo'), QKeySequence.Undo)
+        act(e, 'redo', 'Redo', lambda: self._menu_edit('redo'), QKeySequence.Redo)
+        e.addSeparator()
+        for k, t, sc in (('cut', 'Cut', QKeySequence.Cut), ('copy', 'Copy', QKeySequence.Copy),
+                         ('paste', 'Paste', QKeySequence.Paste), ('selectAll', 'Select All', QKeySequence.SelectAll)):
+            act(e, k, t, lambda k=k: self._menu_edit(k), sc)
+        e.addSeparator()
+        act(e, 'edit_line', 'Edit Line…', lambda: self.edit_line_dialog())
+        act(e, 'delete_line', 'Delete Line\t⌫', lambda: self.delete_line())
+
+        v = mb.addMenu('View')
+        act(v, 'theme', 'Light / Dark Appearance', self._toggle_theme, 'Ctrl+Shift+L')
+        act(v, 'engine', 'Engine Settings…', lambda: self.app.open_engine())
+        act(v, 'inst', '♪ Settings…', self._inst_settings)
+        v.addSeparator()
+        act(v, 'fullscreen', 'Enter Full Screen', self._toggle_full, QKeySequence.FullScreen)
+
+        w = mb.addMenu('Window')
+        act(w, 'minimize', 'Minimize', self.showMinimized, 'Ctrl+M')
+        act(w, 'zoom', 'Zoom', self._toggle_max)
+
+        h = mb.addMenu('Help')
+        act(h, 'help', 'Lyricist Sync on GitHub', lambda: QDesktopServices.openUrl(QUrl('https://github.com/Ax-Easy/lyricist-sync')))
+        act(h, 'site', 'Ax-Easy Website', lambda: QDesktopServices.openUrl(QUrl(meta.PUBLISHER_URL)))
+
+    def _menu_edit(self, what):
+        """Edit menu: text fields get the standard action; the line list gets undo/redo of line edits."""
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QPlainTextEdit, QTextEdit)) and hasattr(fw, what):
+            getattr(fw, what)()
+            return
+        if what in ('undo', 'redo') and self._lines():
+            self._history_step(what == 'undo')
 
     def closeEvent(self, e):
         if self.app.busy:

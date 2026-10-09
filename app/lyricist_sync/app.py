@@ -257,6 +257,15 @@ class App:
         if os.environ.get('LYRICIST_SYNC_FAKE_VRAM'):   # screenshots/tests
             variant, vram = 'cuda', float(os.environ['LYRICIST_SYNC_FAKE_VRAM'])
             name = os.environ.get('LYRICIST_SYNC_FAKE_GPU', 'NVIDIA GeForce RTX 3090')
+        if bootstrap.IS_MAC and not os.environ.get('LYRICIST_SYNC_FAKE_VRAM'):
+            # Mac: Apple Silicon (MPS, tiered by unified memory) or Intel (CPU, tiered by RAM)
+            from . import macfx
+            variant = st.get('variant') or bootstrap.recommended_variant()
+            mem = float(os.environ.get('LYRICIST_SYNC_FAKE_MEM') or eng.get('memory_gb') or macfx.memory_gb() or 0)
+            chip = eng.get('device_name') or macfx.chip_name()
+            return {'variant': variant, 'gpu': chip if variant == 'mps' else None, 'vram_gb': mem, 'memory_gb': mem,
+                    'device': eng.get('device') or '', 'cpu': chip, 'mac': True,
+                    'tier': bootstrap.whisper_tier(mem, bootstrap.tier_variant(variant))}
         return {'variant': variant, 'gpu': name, 'vram_gb': vram, 'cpu': eng.get('device_name') if eng.get('device') == 'cpu' else '',
                 'tier': bootstrap.whisper_tier(vram, variant)}
 
