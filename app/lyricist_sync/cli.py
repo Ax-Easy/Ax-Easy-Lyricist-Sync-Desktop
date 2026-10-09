@@ -57,6 +57,8 @@ def main(argv=None):
     ap.add_argument('--update-test', metavar='URL', help='check/download/verify an update from URL (CI test); '
                     'with --install also run the installer silently')
     ap.add_argument('--install', action='store_true')
+    ap.add_argument('--edit-test', metavar='AUDIO', help='CI: sync AUDIO (--lyrics), edit a line like the review list does, '
+                    're-align that line with the engine, export, and write a --report')
     a = ap.parse_args(argv[1:])
     if a.force_win10_style:
         os.environ['LYRICIST_SYNC_FORCE_WIN10'] = '1'
@@ -70,7 +72,7 @@ def main(argv=None):
         _console()
         from .setup_test import run_update_test
         return _hard_exit(run_update_test(a.update_test, a.install, a.report))
-    headless = a.version or a.selftest or a.screens or a.setup or a.sync or a.screens_maximized or a.transcribe
+    headless = a.version or a.selftest or a.screens or a.setup or a.sync or a.screens_maximized or a.transcribe or a.edit_test
     if not headless:
         from .app import run_gui
         return run_gui([argv[0]] + a.files)
@@ -92,6 +94,8 @@ def main(argv=None):
         return cli_setup(a.variant)
     if a.sync or a.transcribe:
         return cli_sync(a)
+    if a.edit_test:
+        return cli_edit_test(a)
     return 0
 
 
@@ -220,3 +224,104 @@ def cli_sync(a):
         with open(a.report, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=1)
     return rc
+
+
+def _engine_proc():
+    from . import bootstrap, paths
+    return bootstrap.popen([paths.runtime_python(), '-u', paths.engine_script(), '--models', paths.models_dir(), 'serve'],
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           stderr=open(os.path.join(paths.home(), 'engine.log'), 'a'),
+                           env=bootstrap.engine_env(), creationflags=bootstrap.NO_WINDOW)
+
+
+def _ask(proc, job):
+    proc.stdin.write((json.dumps(job, ensure_ascii=False) + '\n').encode('utf-8'))
+    proc.stdin.flush()
+    for raw in proc.stdout:
+        ev = json.loads(raw.decode('utf-8'))
+        if ev.get('event') == 'result':
+            return ev['result']
+        if ev.get('event') == 'error':
+            raise RuntimeError(ev.get('error'))
+    raise RuntimeError('engine stopped')
+
+
+def cli_edit_test(a):
+    """The review-list edits on a real sync: change the words of one line (times kept), move it
+    1.5 s off, re-align only that line within its neighbours, split / merge / undo, export."""
+    from . import bootstrap, edits as E, instrumental
+    from .export import export_song, read_tags
+    from .formats import decode_text
+    from .lyrics import resolve_lang, sidecar_lyrics, split_lines
+    if not bootstrap.is_ready():
+        print('The engine is not set up.')
+        return 2
+    audio = os.path.abspath(a.edit_test)
+    text = decode_text(open(a.lyrics, 'rb').read())[0] if a.lyrics else (sidecar_lyrics(audio)[0] or '')
+    lines = split_lines(text)
+    lang, iso = resolve_lang(a.lang, lines)
+    proc = _engine_proc()
+    rep = {'audio': audio, 'checks': {}}
+    try:
+        res = _ask(proc, {'cmd': 'sync', 'id': 'e', 'audio': audio, 'lines': lines, 'lang': lang, 'iso': iso,
+                          'whisper': a.whisper if a.whisper != 'auto' else None})
+        instrumental.apply(res, {})
+
+        class S:
+            pass
+        s = S()
+        s.path, s.tags, s.result, s.iso, s.lyrics, s.edited, s.dirty, s.status = audio, read_tags(audio), res, iso, text, False, False, ''
+        h = E.history(s)
+        L = res['lines']
+        row = next(i for i, l in enumerate(L) if not l.get('inst') and i > 0 and i + 1 < len(L) and len(l['text'].split()) >= 4)
+        orig = dict(L[row])
+        new_text = orig['text'].split(' ', 1)[1] + ' ' + orig['text'].split(' ', 1)[0]   # words changed a lot
+        h.push(s, 'Edit line')
+        E.set_text(s, row, new_text)
+        rep['checks']['edit_keeps_times'] = (L[row]['start'], L[row]['end']) == (orig['start'], orig['end'])
+        rep['checks']['lyrics_box_updated'] = new_text in s.lyrics.splitlines() and orig['text'] not in s.lyrics.splitlines()
+        h.push(s, 'Move line')
+        E.set_times(s, row, start=orig['start'] + 1.5)
+        E.history(s).push(s, 'Edit line')
+        E.set_text(s, row, orig['text'])   # back to the real words, then re-align from the wrong time
+        lo, hi = E.realign_window(L, row, res.get('duration'))
+        t0 = time.time()
+        r = _ask(proc, {'cmd': 'realign', 'id': 'r', 'audio': audio, 'text': orig['text'], 'lo': lo, 'hi': hi,
+                        'iso': iso, 'lang': lang, 'row': row})
+        E.apply_realign(s, row, r['start'], r['end'], r['conf'], r['why'])
+        rep['realign'] = {'row': row, 'text': orig['text'], 'window': [lo, hi], 'synced_start': orig['start'],
+                          'moved_to': orig['start'] + 1.5, 'realigned_start': r['start'], 'realigned_end': r['end'],
+                          'error_s': round(abs(r['start'] - orig['start']), 3), 'conf': r['conf'], 'seconds': round(time.time() - t0, 2)}
+        rep['checks']['realign_within_0.15s'] = abs(r['start'] - orig['start']) <= 0.15
+        n0 = len(L)
+        h.push(s, 'Split line')
+        r2 = E.split(s, row)
+        rep['checks']['split'] = len(s.result['lines']) == n0 + 1 and s.result['lines'][r2]['start'] == s.result['lines'][row]['end']
+        h.push(s, 'Merge lines')
+        E.merge(s, row)
+        rep['checks']['merge'] = s.result['lines'][row]['text'] == orig['text'] and len(s.result['lines']) == n0
+        h.undo(s)
+        h.undo(s)
+        rep['checks']['undo'] = len(s.result['lines']) == n0 and s.result['lines'][row]['start'] == r['start']
+        h.push(s, 'Edit line')
+        E.set_text(s, row, 'Ήλιος ' + orig['text'])
+        out = a.out or os.path.dirname(audio)
+        files = export_song(s, {'dir': out, 'formats': a.formats.split(','), 'bom': a.bom})
+        body = {os.path.splitext(f)[1]: open(f, encoding='utf-8-sig').read() for f in files}
+        rep['checks']['exports_show_edit'] = bool(body) and all(('Ήλιος ' + orig['text']) in b for b in body.values())
+        rep['files'] = files
+        rep['ok'] = all(rep['checks'].values())
+    except Exception as e:
+        rep['ok'] = False
+        rep['error'] = str(e)
+    finally:
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=30)
+        except Exception:
+            proc.kill()
+    print(json.dumps(rep, ensure_ascii=False, indent=1), flush=True)
+    if a.report:
+        with open(a.report, 'w', encoding='utf-8') as f:
+            json.dump(rep, f, ensure_ascii=False, indent=1)
+    return 0 if rep['ok'] else 1
