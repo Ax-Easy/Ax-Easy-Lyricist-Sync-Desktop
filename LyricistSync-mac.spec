@@ -1,4 +1,4 @@
-# PyInstaller spec (macOS): "Lyricist Sync.app", universal2 (Apple Silicon + Intel in one bundle),
+# PyInstaller spec (macOS): "Lyricist Sync Desktop.app", universal2 (Apple Silicon + Intel in one bundle),
 # GUI + bootstrap only; PyTorch is downloaded by the first-run setup for this Mac's architecture.
 # Build with a universal2 Python (python.org 3.12 installer) and the universal2 PySide6 6.7 wheels.
 import glob, os, re
@@ -37,13 +37,13 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='LyricistSync', consol
 coll = COLLECT(exe, a.binaries, a.datas, name='LyricistSync', upx=False)
 app = BUNDLE(
     coll,
-    name='Lyricist Sync.app',
+    name='Lyricist Sync Desktop.app',
     icon='mac/LyricistSync.icns',
     bundle_identifier='com.ax-easy.lyricistsync',
     version=VERSION,
     info_plist={
-        'CFBundleName': 'Lyricist Sync',
-        'CFBundleDisplayName': 'Lyricist Sync',
+        'CFBundleName': 'Lyricist Sync Desktop',
+        'CFBundleDisplayName': 'Lyricist Sync Desktop',
         'CFBundleShortVersionString': VERSION,
         'CFBundleVersion': VERSION,
         'NSHumanReadableCopyright': 'Copyright © 2026 Ax-Easy (Evangelos Makrydakis). All rights reserved.',

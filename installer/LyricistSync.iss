@@ -1,5 +1,7 @@
-; Inno Setup 6 script for Ax-Easy Lyricist Sync (per-user install, no admin needed).
-#define MyAppName "Ax-Easy Lyricist Sync"
+; Inno Setup 6 script for Ax-Easy Lyricist Sync Desktop (per-user install, no admin needed).
+#define MyAppName "Ax-Easy Lyricist Sync Desktop"
+; the name before 1.3.1: its shortcuts are removed on update (same AppId, same folder, same data)
+#define OldAppName "Ax-Easy Lyricist Sync"
 #ifndef MyAppVersion
   #define MyAppVersion "1.3.1"
 #endif
@@ -26,7 +28,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir=..\dist-installer
-OutputBaseFilename=AxEasy-LyricistSync-Setup-{#MyAppVersion}
+OutputBaseFilename=AxEasy-LyricistSync-Desktop-Setup-{#MyAppVersion}
 SetupIconFile=LyricistSync.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -51,6 +53,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; the app folder is replaced as a whole on update (the old build used another Python version);
 ; settings, the engine and the AI models live in %LOCALAPPDATA%\Ax-Easy\LyricistSync and are never touched here
 Type: filesandordirs; Name: "{app}\_internal"
+; shortcuts with the old product name
+Type: files; Name: "{group}\{#OldAppName}.lnk"
+Type: files; Name: "{group}\Uninstall {#OldAppName}.lnk"
+Type: files; Name: "{autodesktop}\{#OldAppName}.lnk"
 
 [Files]
 Source: "..\dist\LyricistSync\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

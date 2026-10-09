@@ -3,7 +3,7 @@
 update.json: {"version": "1.1.0", "date": "2026-10-09", "notes": "markdown or plain text",
               "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.1.0.exe",
               "sha256": "<64 hex>", "size": 41000000, "minimum_os": "10.0.17763",
-              "mac": {"url": "https://.../AxEasy-LyricistSync-1.3.1-mac-universal.dmg", "sha256": "<64 hex>",
+              "mac": {"url": "https://.../AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg", "sha256": "<64 hex>",
                       "size": 150000000, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
 The top level is the Windows installer (what 1.1-1.3 read); a Mac reads the "mac" entry. On a Mac
 the update is a notarized DMG: after the SHA256 check the app mounts it, checks the new app's
@@ -272,7 +272,7 @@ def run_installer(path, relaunch=True, wait=False, extra=None):
 
 # ---------------------------------------------------------------- macOS: DMG install
 def current_bundle():
-    """/Applications/Lyricist Sync.app when running from a bundle, else None."""
+    """/Applications/Lyricist Sync Desktop.app when running from a bundle, else None."""
     exe = os.path.realpath(sys.executable)
     i = exe.find('.app/Contents/MacOS/')
     return exe[:i + 4] if i > 0 else None
@@ -351,7 +351,7 @@ def install_mac(dmg, relaunch=True, target=None):
     script = os.path.join(updates_dir(), 'swap.sh')
     with open(script, 'w') as f:
         f.write('#!/bin/sh\n'
-                '# Lyricist Sync update: wait for the app to quit, swap the bundles, start the new one.\n'
+                '# Lyricist Sync Desktop update: wait for the app to quit, swap the bundles, start the new one.\n'
                 'pid=%d\n'
                 'for i in $(seq 1 600); do kill -0 $pid 2>/dev/null || break; sleep 0.2; done\n'
                 'rm -rf %s\n'

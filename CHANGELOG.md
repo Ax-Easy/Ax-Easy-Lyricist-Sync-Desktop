@@ -41,7 +41,7 @@
 
 
 ### macOS (new)
-- **Lyricist Sync for Mac**: one universal app for Apple Silicon (macOS 11+) and Intel (macOS 12+), signed with
+- **Lyricist Sync Desktop for Mac**: one universal app for Apple Silicon (macOS 11+) and Intel (macOS 12+), signed with
   the Ax-Easy Developer ID and notarized by Apple, in a drag-to-Applications DMG.
 - The first-run setup (same 7 steps) downloads the PyTorch build for the Mac: Apple Silicon gets PyTorch 2.5.1 with
   **Metal (MPS)** and an automatic CPU fallback; Intel Macs get PyTorch 2.2.2 on the CPU. The Whisper size follows the
@@ -52,6 +52,7 @@
   replaced in place, or the DMG opens for a manual drag when that isn't possible.
 
 ### Other
+- New name: **Ax-Easy Lyricist Sync Desktop** (window title, About, setup, installer, Start menu, Mac app and DMG). The GitHub repository is now Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop. Settings, the engine and the models stay where they were, so existing installs update in place and keep everything. The old Start-menu and desktop shortcuts are replaced.
 - Audio tags are read with tinytag (MIT) instead of mutagen (GPL); the builds exclude mutagen and the self-test checks it.
 - Tests and fixtures use made-up lyrics only.
 - LICENSE (all rights reserved, source visible) and THIRD_PARTY_NOTICES.md, also shipped inside the app.

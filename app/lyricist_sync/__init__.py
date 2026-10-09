@@ -1,5 +1,5 @@
-"""Ax-Easy Lyricist Sync: auto-sync pasted lyrics to songs (Demucs + Whisper + MMS_FA)."""
-APP_NAME = "Ax-Easy Lyricist Sync"
+"""Ax-Easy Lyricist Sync Desktop: auto-sync pasted lyrics to songs (Demucs + Whisper + MMS_FA)."""
+APP_NAME = "Ax-Easy Lyricist Sync Desktop"
 VERSION = "1.3.1"
 PUBLISHER = "Ax-Easy"
 PUBLISHER_URL = "https://www.ax-easy.com"

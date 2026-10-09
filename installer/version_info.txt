@@ -3,12 +3,12 @@ VSVersionInfo(
   kids=[
     StringFileInfo([StringTable('040904B0', [
       StringStruct('CompanyName', 'Ax-Easy'),
-      StringStruct('FileDescription', 'Ax-Easy Lyricist Sync'),
+      StringStruct('FileDescription', 'Ax-Easy Lyricist Sync Desktop'),
       StringStruct('FileVersion', '1.3.1.0'),
       StringStruct('InternalName', 'LyricistSync'),
       StringStruct('LegalCopyright', 'Copyright (c) 2026 Ax-Easy'),
       StringStruct('OriginalFilename', 'LyricistSync.exe'),
-      StringStruct('ProductName', 'Ax-Easy Lyricist Sync'),
+      StringStruct('ProductName', 'Ax-Easy Lyricist Sync Desktop'),
       StringStruct('ProductVersion', '1.3.1')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

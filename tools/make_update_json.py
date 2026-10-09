@@ -1,8 +1,8 @@
 """Write update.json for the in-app updater from a built installer.
 
-  python tools/make_update_json.py dist-installer/AxEasy-LyricistSync-Setup-1.3.1.exe \
+  python tools/make_update_json.py dist-installer/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe \
       [--base https://www.ax-easy.com/lyricist-sync/] [--version 1.3.1] [--out dist-installer/update.json]
-      [--mac AxEasy-LyricistSync-1.3.1-mac-universal.dmg [--mac-base URL]]
+      [--mac AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg [--mac-base URL]]
 
 The top level is the Windows installer (what 1.0-1.3.x clients read); "mac" is the entry the macOS app
 overlays on it (url, sha256, size, minimum_os per architecture).

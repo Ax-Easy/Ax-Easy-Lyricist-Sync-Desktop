@@ -1763,11 +1763,11 @@ class GlassWindow(QWidget, chrome.Frame):
             acts[key] = a
             return a
 
-        app_menu = mb.addMenu('Lyricist Sync')   # the roles below move into the application menu
-        act(app_menu, 'about', 'About Lyricist Sync', self._about, role=QAction.AboutRole)
+        app_menu = mb.addMenu('Lyricist Sync Desktop')   # the roles below move into the application menu
+        act(app_menu, 'about', 'About Lyricist Sync Desktop', self._about, role=QAction.AboutRole)
         act(app_menu, 'updates', 'Check for Updates…', lambda: self.app.open_updates(), role=QAction.ApplicationSpecificRole)
         act(app_menu, 'settings', 'Settings…', lambda: self.app.open_engine(), QKeySequence.Preferences, QAction.PreferencesRole)
-        act(app_menu, 'quit', 'Quit Lyricist Sync', self.close, QKeySequence.Quit, QAction.QuitRole)
+        act(app_menu, 'quit', 'Quit Lyricist Sync Desktop', self.close, QKeySequence.Quit, QAction.QuitRole)
 
         f = mb.addMenu('File')
         act(f, 'add', 'Add Songs…', self._add_songs, QKeySequence.Open)
@@ -1802,7 +1802,7 @@ class GlassWindow(QWidget, chrome.Frame):
         act(w, 'zoom', 'Zoom', self._toggle_max)
 
         h = mb.addMenu('Help')
-        act(h, 'help', 'Lyricist Sync on GitHub', lambda: QDesktopServices.openUrl(QUrl('https://github.com/Ax-Easy/lyricist-sync')))
+        act(h, 'help', 'Lyricist Sync Desktop on GitHub', lambda: QDesktopServices.openUrl(QUrl('https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop')))
         act(h, 'site', 'Ax-Easy Website', lambda: QDesktopServices.openUrl(QUrl(meta.PUBLISHER_URL)))
 
     def _menu_edit(self, what):

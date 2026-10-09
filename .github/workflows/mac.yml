@@ -1,6 +1,6 @@
 name: mac
 
-# macOS: one universal2 "Lyricist Sync.app" (Apple Silicon + Intel) built on an Apple Silicon runner,
+# macOS: one universal2 "Lyricist Sync Desktop.app" (Apple Silicon + Intel) built on an Apple Silicon runner,
 # signed + notarized + stapled (only on trusted events, see "Signing mode"), packed in a drag-to-Applications DMG,
 # then tested from the DMG on both architectures (Gatekeeper, self-test, first-run engine setup, sync/transcribe).
 on:
@@ -62,7 +62,7 @@ jobs:
             push) case "${{ github.ref }}" in refs/heads/main|refs/heads/mac-*|refs/heads/release/*|refs/tags/v*) trusted=true ;; esac ;;
             workflow_dispatch) [ "${{ inputs.sign }}" = true ] && trusted=true ;;
           esac
-          if [ "$trusted" = true ] && [ "$HAS_CERT" = true ] && [ "${{ github.repository }}" = "Ax-Easy/lyricist-sync" ]; then
+          if [ "$trusted" = true ] && [ "$HAS_CERT" = true ] && [ "${{ github.repository }}" = "Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop" ]; then
             echo "sign=true" >> "$GITHUB_OUTPUT"; echo "Developer ID signing + notarization"
           else
             echo "sign=false" >> "$GITHUB_OUTPUT"; echo "::notice title=macOS signing::ad-hoc signature, not notarized (event ${{ github.event_name }})"
@@ -93,7 +93,7 @@ jobs:
       - name: Every Mach-O in the bundle is universal (arm64 + x86_64); Info.plist minimums
         run: |
           set -euo pipefail
-          APP="dist/Lyricist Sync.app"
+          APP="dist/Lyricist Sync Desktop.app"
           python - "$APP" <<'PY'
           import os, subprocess, sys
           app = sys.argv[1]; bad = []; n = 0
@@ -151,11 +151,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ steps.mode.outputs.sign }}" = true ]; then
-            mac/sign.sh "dist/Lyricist Sync.app" "$MACOS_SIGN_IDENTITY" "$SIGN_KEYCHAIN"
+            mac/sign.sh "dist/Lyricist Sync Desktop.app" "$MACOS_SIGN_IDENTITY" "$SIGN_KEYCHAIN"
           else
-            mac/sign.sh "dist/Lyricist Sync.app" -
+            mac/sign.sh "dist/Lyricist Sync Desktop.app" -
           fi
-          codesign -d --entitlements - --xml "dist/Lyricist Sync.app" | plutil -p - || true
+          codesign -d --entitlements - --xml "dist/Lyricist Sync Desktop.app" | plutil -p - || true
 
       - name: API key for notarytool
         if: steps.mode.outputs.sign == 'true'
@@ -179,27 +179,27 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p notary
-          ditto -c -k --sequesterRsrc --keepParent "dist/Lyricist Sync.app" "$RUNNER_TEMP/notary/app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Lyricist Sync Desktop.app" "$RUNNER_TEMP/notary/app.zip"
           mac/notarize.sh "$RUNNER_TEMP/notary/app.zip" "$NOTARY_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" notary/app.json | tee notary/app.txt
           grep -E '^(id|status)=' notary/app.txt >> "$GITHUB_OUTPUT"
-          xcrun stapler staple "dist/Lyricist Sync.app"
-          xcrun stapler validate "dist/Lyricist Sync.app"
-          spctl -a -vvv -t exec "dist/Lyricist Sync.app" 2>&1 | tee notary/spctl-app.txt
+          xcrun stapler staple "dist/Lyricist Sync Desktop.app"
+          xcrun stapler validate "dist/Lyricist Sync Desktop.app"
+          spctl -a -vvv -t exec "dist/Lyricist Sync Desktop.app" 2>&1 | tee notary/spctl-app.txt
 
       - name: HTTPS works without python.org's certificate folder (as on a user's Mac)
         run: |
           set -euo pipefail
           sudo mv /Library/Frameworks/Python.framework/Versions/3.12/etc/openssl /tmp/pyorg-openssl.bak 2>/dev/null || true
           rc=0
-          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --https-check https://pypi.org/simple/ || rc=$?
+          "dist/Lyricist Sync Desktop.app/Contents/MacOS/LyricistSync" --https-check https://pypi.org/simple/ || rc=$?
           sudo mv /tmp/pyorg-openssl.bak /Library/Frameworks/Python.framework/Versions/3.12/etc/openssl 2>/dev/null || true
           exit $rc
 
       - name: Self-test the signed app (arm64 slice, hardened runtime)
         run: |
           rc=0
-          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --version
-          mac/watchdog.sh 600 selftest "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --selftest --report selftest-build.json || rc=$?
+          "dist/Lyricist Sync Desktop.app/Contents/MacOS/LyricistSync" --version
+          mac/watchdog.sh 600 selftest "dist/Lyricist Sync Desktop.app/Contents/MacOS/LyricistSync" --selftest --report selftest-build.json || rc=$?
           cat selftest-build.json || true
           exit $rc
 
@@ -211,8 +211,8 @@ jobs:
       - name: Screenshots (native window, dark and light) + maximized
         continue-on-error: true
         run: |
-          mac/watchdog.sh 420 screens "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens screens-mac --fixture tests/fixtures
-          mac/watchdog.sh 300 screens-max "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens-maximized screens-mac/max --fixture tests/fixtures || echo "::warning::maximized screens failed"
+          mac/watchdog.sh 420 screens "dist/Lyricist Sync Desktop.app/Contents/MacOS/LyricistSync" --screens screens-mac --fixture tests/fixtures
+          mac/watchdog.sh 300 screens-max "dist/Lyricist Sync Desktop.app/Contents/MacOS/LyricistSync" --screens-maximized screens-mac/max --fixture tests/fixtures || echo "::warning::maximized screens failed"
           ls -R screens-mac | head -80
 
       - name: DMG (drag to Applications, Retina background)
@@ -220,11 +220,11 @@ jobs:
         run: |
           set -euo pipefail
           V=$(python -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('app/lyricist_sync/__init__.py').read()).group(1))")
-          NAME="AxEasy-LyricistSync-$V-mac-universal.dmg"
+          NAME="AxEasy-LyricistSync-Desktop-$V-mac-universal.dmg"
           QT_QPA_PLATFORM=offscreen python mac/make_dmg_background.py build/dmgbg
           tiffutil -cathidpicheck build/dmgbg/dmg-background.png build/dmgbg/dmg-background@2x.png -out build/dmg-background.tiff
           mkdir -p dist-mac
-          dmgbuild -s mac/dmg_settings.py -D app="dist/Lyricist Sync.app" -D background=build/dmg-background.tiff "Lyricist Sync" "dist-mac/$NAME"
+          dmgbuild -s mac/dmg_settings.py -D app="dist/Lyricist Sync Desktop.app" -D background=build/dmg-background.tiff "Lyricist Sync Desktop" "dist-mac/$NAME"
           if [ "${{ steps.mode.outputs.sign }}" = true ]; then
             codesign --force --timestamp --keychain "$SIGN_KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "dist-mac/$NAME"
             codesign --verify -vv "dist-mac/$NAME"
@@ -253,9 +253,9 @@ jobs:
           { echo "== spctl -a -vvv -t install"; spctl -a -vvv -t install "$D" 2>&1
             echo "== stapler validate"; xcrun stapler validate "$D" 2>&1
             M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
-            echo "== codesign --verify --deep --strict (app in the DMG)"; codesign --verify --deep --strict -vv "$M/Lyricist Sync.app" 2>&1
-            echo "== spctl -a -vvv -t exec (app in the DMG)"; spctl -a -vvv -t exec "$M/Lyricist Sync.app" 2>&1
-            echo "== stapler validate (app)"; xcrun stapler validate "$M/Lyricist Sync.app" 2>&1
+            echo "== codesign --verify --deep --strict (app in the DMG)"; codesign --verify --deep --strict -vv "$M/Lyricist Sync Desktop.app" 2>&1
+            echo "== spctl -a -vvv -t exec (app in the DMG)"; spctl -a -vvv -t exec "$M/Lyricist Sync Desktop.app" 2>&1
+            echo "== stapler validate (app)"; xcrun stapler validate "$M/Lyricist Sync Desktop.app" 2>&1
             hdiutil detach "$M" -quiet; } | tee notary/gatekeeper.txt
           grep -q 'source=Notarized Developer ID' notary/gatekeeper.txt
 
@@ -330,9 +330,9 @@ jobs:
           fi
           M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
           ls -la "$M"
-          ditto "$M/Lyricist Sync.app" "/Applications/Lyricist Sync.app"
+          ditto "$M/Lyricist Sync Desktop.app" "/Applications/Lyricist Sync Desktop.app"
           hdiutil detach "$M" -quiet
-          APP="/Applications/Lyricist Sync.app"
+          APP="/Applications/Lyricist Sync Desktop.app"
           echo "APP=$APP" >> "$GITHUB_ENV"
           echo "BIN=$APP/Contents/MacOS/LyricistSync" >> "$GITHUB_ENV"
           echo "H=$HOME/Library/Application Support/Ax-Easy/LyricistSync" >> "$GITHUB_ENV"
