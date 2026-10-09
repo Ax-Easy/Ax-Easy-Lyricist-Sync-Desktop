@@ -198,6 +198,8 @@ def render_maximized(out_dir, fixture_dir=None):
         except ValueError:   # another drive
             rel = cfg
         os.environ['QT_QPA_PLATFORM'] = 'offscreen:configfile=' + rel.replace('\\', '/')
+        if os.name == 'nt':   # the offscreen platform on Windows only finds fonts through QT_QPA_FONTDIR
+            os.environ.setdefault('QT_QPA_FONTDIR', os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts'))
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
     from PySide6.QtCore import QPoint as _P
