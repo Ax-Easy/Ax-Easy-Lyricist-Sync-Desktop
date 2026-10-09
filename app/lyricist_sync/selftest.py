@@ -92,6 +92,23 @@ def run(report_path=None):
     qapp = QApplication.instance() or QApplication([sys.argv[0]])
     ctx = {}
 
+    modals = []
+
+    seen = {}
+
+    def _dismiss():   # never hang on a modal the test didn't expect: close it (after 2 s) and remember its title
+        w = QApplication.activeModalWidget()
+        if w is None or getattr(w, '_selftest_keep', False):
+            return
+        seen[id(w)] = seen.get(id(w), 0) + 1
+        if seen[id(w)] >= 5:
+            modals.append(w.windowTitle() or w.__class__.__name__)
+            w.reject()
+    from PySide6.QtCore import QTimer
+    watchdog = QTimer()
+    watchdog.timeout.connect(_dismiss)
+    watchdog.start(400)
+
     def gui():
         from .app import App
         app = App(qapp, screenshot=False)
@@ -620,6 +637,272 @@ def run(report_path=None):
         return {'tier': hw['tier'], 'items': items}
     check('engine_dialog', engine_dialog)
 
+    def _fresh(app, lyrics, lines, duration=20.0):
+        from . import edits
+        s = app.current()
+        s.lyrics = lyrics
+        s.result = {'lines': json.loads(json.dumps(lines)), 'duration': duration, 'vocals': [], 'language': 'el',
+                    'repeats': [], 'device': 'cpu', 'timings': {}, 'mode': 'sync'}
+        s.history, s.edited, s.dirty, s.status = edits.History(), False, True, 'Synced'
+        app.busy, app.queue = False, []
+        app.win.show_song(s)
+        qapp.processEvents()
+        return s
+
+    EDIT_LINES = [
+        {'idx': 0, 'text': 'Καλησπέρα κόσμε', 'start': 1.0, 'end': 3.0, 'repeat': False, 'flag': '', 'conf': 0.4,
+         'why': ['weak acoustic match'], 'words': [['Καλησπέρα', 1.0, 2.0, 0.3], ['κόσμε', 2.0, 3.0, 0.9]]},
+        {'idx': 1, 'text': 'Ο ήλιος ανατέλλει πάλι', 'start': 3.5, 'end': 6.5, 'repeat': False, 'flag': '', 'conf': 0.9, 'why': []},
+        {'idx': 2, 'text': 'Glass towers in the rain', 'start': 7.0, 'end': 9.0, 'repeat': False, 'flag': '', 'conf': 0.9, 'why': []},
+        {'idx': 0, 'text': 'Καλησπέρα κόσμε', 'start': 12.0, 'end': 13.5, 'repeat': True, 'flag': '', 'conf': 0.9, 'why': []}]
+    EDIT_LYRICS = '[Ρεφρέν]\nΚαλησπέρα κόσμε\nΟ ήλιος ανατέλλει πάλι\n\nGlass towers in the rain\n'
+
+    def review_edits():
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtWidgets import QAbstractItemView
+        from .lyrics import split_lines
+        app, win = ctx['app'], ctx['app'].win
+        s = _fresh(app, EDIT_LYRICS, EDIT_LINES)
+        L = lambda: s.result['lines']   # noqa: E731
+        # context menu: the labels of the manual
+        labels = [a.text() for a in win.review_menu(1).actions() if not a.isSeparator()]
+        want = ['✎  Edit Line…', '▶  Play from line', '⟲  Re-sync from here', '◎  Re-align this line', 'Split line at cursor',
+                'Merge with next', 'Insert line above', 'Insert line below', '♪  Insert ♪ here', 'Mark as ♪', '♪ settings…',
+                'Undo', 'Redo', 'Delete line']
+        assert labels == want, labels
+        # inline: double-click / F2 opens the editor on the words; Enter commits through the delegate
+        win.review.selectRow(0)
+        win.review.setFocus()
+        assert win.handle_key(Qt.Key_F2) and win.review.state() == QAbstractItemView.State.EditingState
+        ed = win.review_delegate.editor
+        assert ed is not None and ed.text() == 'Καλησπέρα κόσμε', ed and ed.text()
+        ed.setText('Καλησπέρα κόσμε μου')
+        QApplication.sendEvent(ed, QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier))
+        qapp.processEvents()
+        assert L()[0]['text'] == 'Καλησπέρα κόσμε μου' and (L()[0]['start'], L()[0]['end']) == (1.0, 3.0), L()[0]
+        assert L()[3]['text'] == 'Καλησπέρα κόσμε μου', 'repeat not updated'
+        assert win.review.item(0, 4).text() == '✎ edited' and win.review.item(0, 1).data(Qt.UserRole + 2) is None
+        assert 'Καλησπέρα κόσμε μου' in win.lyrics.toPlainText().splitlines() and '[Ρεφρέν]' in win.lyrics.toPlainText()
+        assert win.lyrics.extraSelections() == [] and s.edited and s.dirty
+        # inline time edit (mm:ss.xxx), invalid input refused
+        win.review_delegate.edited.emit(2, 2, '00:06.750')
+        assert L()[2]['start'] == 6.75 and L()[1]['end'] == 6.5
+        win.review_delegate.edited.emit(2, 3, 'abc')
+        assert L()[2]['end'] == 9.0
+        assert abs(win.wave.lines[2]['start'] - 6.75) < 1e-9      # the waveform marker moved too
+        # Edit Line dialog: Greek words, times, Enter saves / Esc cancels
+        from PySide6.QtTest import QTest
+        d = win.edit_line_dialog(1, exec_=False)
+        assert d is not None, (app.busy, len(L()), win.review.currentRow())
+        d._selftest_keep = True
+        assert d.fields['start'].text() == '00:03.500' and d.btn_save.isDefault()
+        d.text.setText('Ο ήλιος βγαίνει ξανά')
+        d.fields['end'].setText('00:06.400')
+        d._nudge('start', 0.1)
+        d._nudge('start', -0.01)
+        assert d.fields['start'].text() == '00:03.590', d.fields['start'].text()
+        d.fields['end'].setText('00:03.000')
+        assert not d.btn_save.isEnabled()
+        d.fields['end'].setText('00:06.400')
+        assert d.realign.isChecked()          # half of the words changed: Re-align is ticked
+        d.realign.setChecked(False)
+        d.show()
+        QTest.keyClick(d.fields['end'], Qt.Key_Return)
+        assert d.result() == 1
+        win.apply_line_dialog(1, d)
+        assert (L()[1]['text'], L()[1]['start'], L()[1]['end']) == ('Ο ήλιος βγαίνει ξανά', 3.59, 6.4), L()[1]
+        d = win.edit_line_dialog(1, exec_=False)
+        d._selftest_keep = True
+        d.text.setText('nothing')
+        d.show()
+        QTest.keyClick(d.text, Qt.Key_Escape)
+        assert d.result() == 0 and L()[1]['text'] == 'Ο ήλιος βγαίνει ξανά'
+        d.close()
+        # big word change ticks "Re-align"
+        d = win.edit_line_dialog(2, exec_=False)
+        d.text.setText('Completely different words now')
+        assert d.realign.isChecked()
+        d.close()
+        # split (middle word, time by characters), merge, insert, delete, ♪ mark/unmark
+        n0 = len(L())
+        r2 = win.split_line(2)
+        assert len(L()) == n0 + 1 and L()[2]['text'] == 'Glass towers' and L()[r2]['text'] == 'in the rain', [l['text'] for l in L()]
+        assert abs(L()[2]['end'] - (6.75 + 2.25 * 12 / 23)) < 0.002, L()[2]
+        win.merge_line(2)
+        assert len(L()) == n0 and L()[2]['text'] == 'Glass towers in the rain'
+        r = win.insert_line(2, below=True, edit=False)
+        assert L()[r]['text'] == 'New line' and 'New line' in split_lines(win.lyrics.toPlainText())
+        win.set_line_text(r, 'Ένας νέος στίχος')
+        assert 'Ένας νέος στίχος' in split_lines(s.lyrics)
+        win.delete_line(r)
+        assert 'Ένας νέος στίχος' not in s.lyrics and len(L()) == n0
+        win.mark_inst(2)
+        assert L()[2].get('inst') and 'Glass towers in the rain' not in split_lines(s.lyrics)
+        win.unmark_inst(2)
+        assert L()[2]['text'] == 'Glass towers in the rain' and 'Glass towers in the rain' in split_lines(s.lyrics)
+        # undo / redo with Ctrl+Z / Ctrl+Y (history per song)
+        steps = len(s.history.undo_stack)
+        win.review.setFocus()
+        assert win.handle_key(Qt.Key_Z, Qt.ControlModifier)      # unmark undone
+        assert L()[2].get('inst')
+        assert win.handle_key(Qt.Key_Y, Qt.ControlModifier)
+        assert not L()[2].get('inst')
+        for _ in range(steps):
+            win.handle_key(Qt.Key_Z, Qt.ControlModifier)
+        assert [l['text'] for l in L()] == [l['text'] for l in EDIT_LINES], [l['text'] for l in L()]
+        assert s.lyrics == EDIT_LYRICS and not s.edited
+        assert not win.btn_undo.isEnabled() and win.btn_redo.isEnabled()
+        win.handle_key(Qt.Key_Y, Qt.ControlModifier)
+        assert L()[0]['text'] == 'Καλησπέρα κόσμε μου'
+        # Re-align this line: one engine job inside the neighbours' bounds, result applied, undoable
+        jobs = []
+
+        class FakeEngine:
+            def submit(self, job):
+                jobs.append(job)
+        real_engine, app.engine = app.engine, FakeEngine()
+        real_ensure, app.ensure_engine = app.ensure_engine, lambda: True
+        try:
+            win.realign_line(2)
+            assert jobs and jobs[0]['cmd'] == 'realign' and jobs[0]['lo'] <= L()[2]['start'] and jobs[0]['hi'] >= L()[2]['end'], jobs
+            assert app.busy
+            app._result(s.id, {'realign': True, 'row': 2, 'text': L()[2]['text'], 'start': 7.2, 'end': 8.8, 'conf': 0.88, 'why': []})
+            assert not app.busy and (L()[2]['start'], L()[2]['end']) == (7.2, 8.8)
+            win.undo()
+            assert L()[2]['start'] == 7.0
+            win.redo()
+            # unsaved-edits safety: Keep my edits / Replace
+            jobs.clear()
+            win.ask_keep_edits = lambda songs, action: 'keep'
+            app.sync_current()
+            assert not jobs and not app.busy and s.edited
+            app.transcribe_current()
+            assert not jobs
+            win.ask_keep_edits = lambda songs, action: 'replace'
+            app.sync_current()
+            assert jobs and jobs[0]['cmd'] == 'sync' and 'Καλησπέρα κόσμε μου' in jobs[0]['lines'], jobs
+            app.busy, app.queue = False, []
+        finally:
+            app.engine, app.ensure_engine = real_engine, real_ensure
+            del win.ask_keep_edits
+        from .dialogs import KeepEditsDialog
+        k = KeepEditsDialog(win, [s], 'sync')
+        assert (k.btn_keep.text(), k.btn_replace.text()) == ('Keep my edits', 'Replace')
+        k.close()
+        # the exports show the edits
+        out = os.path.join(tmp, 'edit-out')
+        s.out_dir = out
+        files = app.export_songs([s])
+        lrc = open([f for f in files if f.endswith('.lrc')][0], encoding='utf-8').read()
+        assert '[00:01.00]Καλησπέρα κόσμε μου' in lrc and '[00:12.00]Καλησπέρα κόσμε μου' in lrc and '[00:07.20]' in lrc, lrc
+        s.out_dir = None
+        return {'menu': labels, 'undo_steps': steps, 'unexpected_modals': list(modals)}
+    check('review_edits', review_edits)
+
+    def export_confirm():
+        from .dialogs import ExportDoneDialog, export_summary
+        app, win = ctx['app'], ctx['app'].win
+        s = _fresh(app, EDIT_LYRICS, EDIT_LINES)
+        assert s.dirty and win.queue.item(app.cur, 0).text().startswith('●'), win.queue.item(app.cur, 0).text()
+        out = os.path.join(tmp, 'exp-ok')
+        s.out_dir = out
+        app.export_songs([s], show=True)
+        d = win.export_popup
+        assert isinstance(d, ExportDoneDialog) and d.isVisible() and not d.isModal()
+        assert export_summary(app.last_export) == '4 files saved for 1 song', export_summary(app.last_export)
+        assert out in d.details.toPlainText() and '.lrc' in d.details.toPlainText()
+        assert (d.btn_open.text(), d.btn_ok.text()) == ('Open folder', 'OK') and d.btn_open.isEnabled()
+        assert not s.dirty and not win.queue.item(app.cur, 0).text().startswith('●')
+        d.btn_ok.click()
+        assert not d.isVisible()
+        # batch: one ok, one failing (the folder is a file), one never synced
+        bad = os.path.join(tmp, 'not-a-folder')
+        open(bad, 'w').close()
+        a, b, c = s, type(s).__new__(type(s)), type(s).__new__(type(s))
+        b.__dict__.update(dict(s.__dict__, id='b', path=s.path, out_dir=os.path.join(bad, 'x'), dirty=True))
+        c.__dict__.update(dict(s.__dict__, id='c', result=None, status='Ready'))
+        a.out_dir = os.path.join(tmp, 'exp-batch')
+        app.export_songs([a, b, c], show=True)
+        d = win.export_popup
+        st = [e['status'] for e in app.last_export]
+        assert sorted(st) == ['failed', 'ok', 'skipped'], st
+        assert export_summary(app.last_export) == '4 files saved for 1 song · 1 skipped · 1 failed', export_summary(app.last_export)
+        html = d.details.toHtml()
+        assert 'Failed:' in d.details.toPlainText() and 'Skipped: not synced or transcribed yet' in d.details.toPlainText()
+        assert d.windowTitle() == 'Export finished with problems', d.windowTitle()
+        assert d.btn_toggle.isVisible() and d.details.isVisible()       # problems: the list is open
+        d.btn_toggle.click()
+        assert not d.details.isVisible() and d.btn_toggle.text() == 'Show files ▾'
+        d.btn_ok.click()
+        assert b.dirty
+        s.out_dir = None
+        return {'summary': export_summary(app.last_export), 'red': 'ff5d5d' in html}
+    check('export_confirm', export_confirm)
+
+    def unsaved_close():
+        from .dialogs import unsaved_dialog
+        from . import updater as upd
+        app, win = ctx['app'], ctx['app'].win
+        s = _fresh(app, EDIT_LYRICS, EDIT_LINES)
+        d = unsaved_dialog(win, [s])
+        labels = [b.text() for b in d.buttons.values()]
+        assert labels == ['Cancel', 'Close without saving', 'Export all & close'], labels
+        assert any('You have unsaved lyrics for 1 song' in l.text() for l in d.findChildren(type(win.status_lbl)))
+        d.close()
+        asked = []
+        win.ask_unsaved = lambda songs, action='close': (asked.append((len(songs), action)) or answer[0])
+        answer = ['cancel']
+        try:
+            assert not app.confirm_close() and s.dirty
+            answer[0] = 'discard'
+            assert app.confirm_close() and s.dirty
+            answer[0] = 'export'
+            s.out_dir = os.path.join(tmp, 'close-export')
+            assert app.confirm_close() and not s.dirty
+            assert app.confirm_close() and len(asked) == 3      # nothing dirty: no question
+            s.dirty = True
+            bad = os.path.join(tmp, 'not-a-folder2')
+            open(bad, 'w').close()
+            s.out_dir = os.path.join(bad, 'x')
+            assert not app.confirm_close() and s.dirty          # export failed: stays open
+            assert win.export_popup.isVisible()
+            win.export_popup.close()
+            # the window's close button goes through the same question
+            answer[0] = 'cancel'
+            win.close()
+            qapp.processEvents()
+            assert win.isVisible()
+            # the updater asks before it starts the installer
+            from .dialogs import UpdateDialog
+            started = []
+
+            class FakeUpd:
+                pass
+            u = FakeUpd()
+            u.app, u.info, u.bar = app, type(win.status_lbl)(), type('B', (), {'set_value': lambda self, v: None})()
+            u._set_buttons = lambda st: None
+            u._failed = lambda msg: u.info.setText(msg)
+            u.accept = lambda: None
+            real_run, upd.run_installer = upd.run_installer, lambda *a, **k: started.append(a)
+            real_quit, app.quit_for_update = app.quit_for_update, lambda: started.append('quit')
+            try:
+                UpdateDialog._downloaded(u, os.path.join(tmp, 'fake-setup.exe'))
+                assert not started and 'not installed' in u.info.text(), u.info.text()
+            finally:
+                upd.run_installer, app.quit_for_update = real_run, real_quit
+            # removing an unsaved song asks first (the watchdog answers Cancel)
+            n = len(app.songs)
+            win.queue.selectRow(app.cur)
+            before = len(modals)
+            win._remove_song()
+            assert len(app.songs) == n and modals[before:] == ['Remove unsaved song?'], modals[before:]
+        finally:
+            del win.ask_unsaved
+            s.out_dir = None
+        return {'asked': asked}
+    check('unsaved_close', unsaved_close)
+
     ok = all(c['ok'] for c in checks)
     rep = {'version': VERSION, 'ok': ok, 'frozen': bool(getattr(sys, 'frozen', False)), 'checks': checks}
     text = json.dumps(rep, ensure_ascii=False, indent=1)
@@ -631,5 +914,6 @@ def run(report_path=None):
     except Exception:
         pass
     if 'app' in ctx:
+        ctx['app']._closing_ok = True
         ctx['app'].win.close()
     return 0 if ok else 1

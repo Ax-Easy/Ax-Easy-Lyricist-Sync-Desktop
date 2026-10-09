@@ -407,6 +407,114 @@ def _engine(app, win, dark, label, out_dir, name):
         os.environ.pop('LYRICIST_SYNC_FAKE_GPU', None)
 
 
+def _edit(app, win, dark, fixture_dir, label, out_dir, name):
+    """1.3.1: the right-click menu on a line, the Edit Line dialog with Greek text, in-place editing,
+    the export confirmation and the unsaved-lyrics question on close."""
+    from PySide6.QtCore import QPoint as _P
+    from .dialogs import ExportDoneDialog, unsaved_dialog
+    from .lyrics import sidecar_lyrics
+    audio = os.path.join(fixture_dir, 'demo_el.mp3')
+    rp = os.path.join(fixture_dir, 'demo_el.result.json')
+    if not (os.path.exists(audio) and os.path.exists(rp)):
+        return
+    app.add_songs([audio])
+    s = next(x for x in app.songs if x.path == audio)
+    _load_result(app, s, rp)
+    s.lyrics = sidecar_lyrics(audio)[0] or s.lyrics
+    s.dirty = True
+    app.cur = app.songs.index(s)
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(s)
+    _wait_audio(win)
+    win.set_busy(False, '', 1.0)
+    L = s.result['lines']
+    row = next(i for i, l in enumerate(L) if l['text'].startswith('Τα λόγια'))
+    # 16: right-click menu (a taller window, so the whole menu fits in the picture)
+    size0 = win.size()
+    win.resize(size0.width(), size0.height() + 180)
+    _pump(0.2)
+    _show_at(win, row, L[row]['start'] + 0.4)
+    win.status_lbl.setText('Right-click a line for Edit Line…, split, merge, insert, ♪ and undo')
+    m = win.review_menu(row)
+    rect = win.review.visualRect(win.review.model().index(row, 1))
+    at = win.review.viewport().mapTo(win, rect.center() + _P(-120, 6))
+    m.popup(win.mapToGlobal(at))
+    _pump(0.3)
+    img = render_alpha(m)
+    _save(compose_labeled(win, dark, label + ' · right-click a line: Edit Line…, Play, Re-sync, Re-align, Split, Merge, '
+                                             'Insert, ♪, Undo / Redo, Delete', overlay=(img, at)),
+          os.path.join(out_dir, '%s_16_line_menu.png' % name))
+    m.hide()
+    m.deleteLater()
+    win.resize(size0)
+    _pump(0.2)
+    # 17: Edit Line… with Greek text
+    d = win.edit_line_dialog(row, exec_=False)
+    d.text.setText('Τα λόγια βρίσκουν πάντα τον ρυθμό τους')
+    d.text.setCursorPosition(len('Τα λόγια βρίσκουν'))
+    d.text.deselect()
+    d.fields['start'].setText('00:08.814')
+    d.show()
+    _pump(0.2)
+    d.text.deselect()
+    d.text.setCursorPosition(len('Τα λόγια βρίσκουν'))
+    _pump(0.05)
+    _save(compose_labeled(d, dark, 'Edit Line… (Greek text): words, Start / End in mm:ss.xxx with ±0.1 / ±0.01, '
+                                   'Play line, Split at cursor, Re-align, Save (Enter) / Cancel (Esc)'),
+          os.path.join(out_dir, '%s_17_edit_line.png' % name))
+    d.close()
+    # 18: editing in place (double-click / F2)
+    win.review.selectRow(row)
+    win.edit_line(row)
+    _pump(0.2)
+    ed = win.review_delegate.editor
+    if ed is not None:
+        ed.setText('Τα λόγια βρίσκουν τον ρυθμό τους ξανά')
+        ed.setCursorPosition(len(ed.text()))
+        ed.deselect()
+    win.status_lbl.setText('Editing line %d in place · Enter saves, Esc cancels · right-click in the text: Split line at cursor'
+                           % (row + 1))
+    _pump(0.1)
+    _save(compose_labeled(win, dark, label + ' · editing a line in place (double-click the words or F2)'),
+          os.path.join(out_dir, '%s_18_inline_edit.png' % name))
+    if ed is not None:
+        win.review.closePersistentEditor(win.review.item(row, 1))
+        win.review_delegate.closeEditor.emit(ed, win.review_delegate.EndEditHint.RevertModelCache)
+    _pump(0.1)
+    # 19: export confirmation (static render with sample paths: 3 songs, one skipped, one failed)
+    base = r'C:\Users\VAG\Music\Monitored' if os.name == 'nt' else '/home/vag/Music/Monitored'
+    sep = '\\' if os.name == 'nt' else '/'
+    rep = []
+    for lab, sub, status, reason in (('Monitored – Stoned', 'Stoned', 'ok', ''),
+                                     ('Ax-Easy Δοκιμή – Ήλιος', 'Ήλιος', 'ok', ''),
+                                     ('Ax-Easy Demo – Glass Towers', 'Glass Towers', 'skipped', 'the files already exist and you chose Skip'),
+                                     ('Monitored – Static', 'Static', 'failed', 'Access is denied (%s%sStatic%sStatic.lrc)' % (base, sep, sep))):
+        d0 = base + sep + sub
+        files = [d0 + sep + lab.replace(' – ', ' - ') + e for e in ('.ttml', '.lrc', '.srt', '.vtt')] if status == 'ok' else []
+        rep.append({'song': None, 'label': lab, 'dir': d0, 'files': files, 'status': status, 'reason': reason})
+    e = ExportDoneDialog(win, rep)
+    e.show()
+    _pump(0.2)
+    _save(compose_labeled(e, dark, 'Export confirmation (static render, sample paths): summary, files per song with the '
+                                   'full folder, skipped in amber, failed in red'),
+          os.path.join(out_dir, '%s_19_export_done.png' % name))
+    e.close()
+
+    class _S:
+        def __init__(self, t):
+            self.t = t
+
+        def label(self):
+            return self.t
+    u = unsaved_dialog(win, [_S('Monitored – Stoned'), _S('Ax-Easy Δοκιμή – Ήλιος'), _S('Ax-Easy Demo – Glass Towers')])
+    u.show()
+    _pump(0.2)
+    _save(compose_labeled(u, dark, 'Closing with unsaved lyrics: Export all & close / Close without saving / Cancel'),
+          os.path.join(out_dir, '%s_20_unsaved_close.png' % name))
+    u.close()
+    s.dirty = False
+
+
 def render(out_dir, fixture_dir=None):
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
@@ -444,6 +552,8 @@ def render(out_dir, fixture_dir=None):
                     _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
                 if 'engine' in only:
                     _engine(app, win, dark, label, out_dir, name)
+                if 'edit' in only:
+                    _edit(app, win, dark, fixture_dir, label, out_dir, name)
                 win.close()
                 continue
             app.add_songs(audios)
@@ -525,6 +635,7 @@ def render(out_dir, fixture_dir=None):
                 _music(app, win, dark, fixture_dir, label, out_dir, name)
                 _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
                 _engine(app, win, dark, label, out_dir, name)
+                _edit(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     chrome.force_win10(forced)
     return 0

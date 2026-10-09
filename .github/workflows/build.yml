@@ -42,6 +42,7 @@ jobs:
           python tests/test_instrumental.py -v
           python tests/test_tiers.py -v
           python tests/test_transcribe.py -v
+          python tests/test_edits.py -v
 
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
@@ -268,6 +269,12 @@ jobs:
         run: |
           python tests/check_transcribe.py transcribe-en.json transcribe-el.json --expect 2 --after-sync after-sync.json
           python tests/check_e2e.py after-sync.json --expect 1
+      - name: Review-list edits on a real sync (edit words, re-align one line with the engine, split/merge/undo, export)
+        shell: pwsh
+        run: |
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--edit-test','tr-in\demo_en.mp3','--lyrics','tests\fixtures\demo_en.txt','--out','edit-out','--report','edit-test.json' -Wait -PassThru -NoNewWindow
+          Get-Content edit-test.json
+          if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "edit test failed" }
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -284,6 +291,8 @@ jobs:
             e2e-out/*
             transcribe-*.json
             after-sync.json
+            edit-test.json
+            edit-out/*
             tr-out/*
             e2e-logs/*
             setup-gui.json

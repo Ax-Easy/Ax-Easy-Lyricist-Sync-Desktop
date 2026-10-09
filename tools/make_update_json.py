@@ -1,7 +1,7 @@
 """Write update.json for the in-app updater from a built installer.
 
-  python tools/make_update_json.py dist-installer/AxEasy-LyricistSync-Setup-1.3.0.exe \
-      [--base https://www.ax-easy.com/lyricist-sync/] [--version 1.3.0] [--out dist-installer/update.json]
+  python tools/make_update_json.py dist-installer/AxEasy-LyricistSync-Setup-1.3.1.exe \
+      [--base https://www.ax-easy.com/lyricist-sync/] [--version 1.3.1] [--out dist-installer/update.json]
 
 Publishing: upload the Setup exe and update.json to /lyricist-sync/ on ax-easy.com."""
 import argparse

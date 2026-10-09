@@ -682,6 +682,31 @@ class Engine:
         return {'from': k0, 'lines': out[k0:], 'vocals': vocal_regions(an['vad']),
                 'timings': {'total': round(time.time() - T0, 2)}}
 
+    def realign(self, job, progress):
+        """Re-align one line after its words were edited: the aligner places job['text'] inside
+        [job['lo'], job['hi']] seconds (its neighbours' bounds). Uses the cached analysis."""
+        T0 = time.time()
+        an = self.load_analysis(job['audio'])
+        if an is None:
+            an = self.analyse(job['audio'], job.get('lang'), progress, transcript=False)
+            self.save_analysis(job['audio'], an)
+        progress('align', 0.9)
+        words = self._occ_words([job['text']], job.get('iso') or '')
+        if not words[0]:
+            raise RuntimeError('No alignable words in this line.')
+        _b, _m, vocab, star = self.mms() if self._mms else (None, None, *self._vocab())
+        em, fs = an['em'], an['fs']
+        lo, hi = float(job['lo']), float(job['hi'])
+        occ = TM.align_window(em, fs, words, int(lo / fs), int(math.ceil(hi / fs)) + 1, vocab, star)
+        if not occ or occ[0] is None:
+            raise RuntimeError('The line does not fit between %.2f s and %.2f s.' % (lo, hi))
+        o = occ[0]
+        conf, why = TM.confidence(o, words[0], an['vad'], [], False)
+        progress('align', 1.0)
+        return {'realign': True, 'row': job.get('row'), 'text': job['text'],
+                'start': round(max(lo, o['start']), 3), 'end': round(min(hi, max(o['end'], o['start'] + 0.1)), 3),
+                'conf': round(conf, 3), 'why': why, 'timings': {'total': round(time.time() - T0, 2)}}
+
     def transcribe_job(self, job, progress):
         """No lyrics needed: Whisper writes the lines (with times and per-word confidence).
         The analysis (vocals, emissions, transcript) is cached so the following Auto-sync on the
@@ -789,7 +814,7 @@ def main():
     ap.add_argument('--device', default='auto')
     ap.add_argument('--cache', default=None)
     ap.add_argument('--whisper', default=None, help='Whisper size (small, medium, large-v3-turbo, large-v3)')
-    ap.add_argument('cmd', choices=['serve', 'check', 'sync', 'transcribe'])
+    ap.add_argument('cmd', choices=['serve', 'check', 'sync', 'transcribe', 'realign'])
     ap.add_argument('args', nargs='*')
     a = ap.parse_args()
     os.environ['TORCH_HOME'] = os.path.join(a.models, 'torch')
@@ -813,6 +838,15 @@ def main():
                                  lambda s, f: emit(event='progress', stage=s, pct=round(f, 3)))
         json.dump(res, open(out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
         emit(event='result', id='cli', result={k: v for k, v in res.items() if k != 'lines'})
+        return 0
+    if a.cmd == 'realign':   # AUDIO TEXT LO HI OUT [lang]
+        audio, text, lo, hi, out = a.args[:5]
+        lang = a.args[5] if len(a.args) > 5 else None
+        res = eng.realign({'audio': audio, 'text': text, 'lo': float(lo), 'hi': float(hi), 'lang': lang,
+                           'iso': {'el': 'ell', 'en': 'eng'}.get(lang or '', '')},
+                          lambda s, f: emit(event='progress', stage=s, pct=round(f, 3)))
+        json.dump(res, open(out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+        emit(event='result', id='cli', result=res)
         return 0
     if a.cmd == 'sync':
         audio, lyrics, out = a.args[:3]
@@ -839,7 +873,7 @@ def main():
         if job.get('whisper'):
             eng.whisper_want = job['whisper']
         try:
-            fn = {'resync': eng.resync, 'transcribe': eng.transcribe_job}.get(job.get('cmd'), eng.sync)
+            fn = {'resync': eng.resync, 'transcribe': eng.transcribe_job, 'realign': eng.realign}.get(job.get('cmd'), eng.sync)
             res = fn(job, lambda s, f, jid=jid: emit(event='progress', id=jid, stage=s, pct=round(f, 3)))
             emit(event='result', id=jid, result=res, cmd=job.get('cmd', 'sync'))
         except Exception as e:  # report and keep serving the queue

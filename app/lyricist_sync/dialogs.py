@@ -21,6 +21,7 @@ class GlassDialog(QDialog, chrome.Frame):
         self.theme = parent.theme
         self.init_frame()
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setWindowTitle(title)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setModal(True)
         m = self.margin()
@@ -759,6 +760,10 @@ class UpdateDialog(GlassDialog):
         if getattr(self.app, 'update_no_install', False):
             self.accept()
             return
+        if not self.app.confirm_close('update'):
+            self.info.setText('The installer is ready. The update was not installed because some lyrics are not saved. Press Update now to try again.')
+            self._set_buttons('failed_dl')
+            return
         try:
             updater.run_installer(path, relaunch=True)
         except Exception as e:
@@ -993,3 +998,356 @@ class EngineDialog(GlassDialog):
             self.dl.cancel.set()
             self.thread.join(3)
         super().reject()
+
+
+def fmt_edit_time(t):
+    """mm:ss.xxx for the time fields of the Edit Line dialog and the inline editor."""
+    ms = int(round(max(0.0, t) * 1000))
+    return '%02d:%02d.%03d' % (ms // 60000, (ms % 60000) // 1000, ms % 1000)
+
+
+def words_changed(a, b):
+    """Share of words that differ between two versions of a line (0..1)."""
+    import difflib
+    wa, wb = a.lower().split(), b.lower().split()
+    if not wa and not wb:
+        return 0.0
+    return 1.0 - difflib.SequenceMatcher(None, wa, wb).ratio()
+
+
+class EditLineDialog(GlassDialog):
+    """Edit Line…: the words, Start and End (mm:ss.xxx with ±0.1 / ±0.01), Play line, Re-align.
+    Enter saves, Esc cancels. After exec(): values() -> (text, start, end, realign), or
+    self.split_cursor (int) when "Split at cursor" was pressed."""
+    REALIGN_AT = 0.4    # this share of the words changed: Re-align is ticked for you
+
+    def __init__(self, parent, line, number, play=None, can_realign=True):
+        from PySide6.QtWidgets import QGridLayout, QLineEdit
+        from .formats import parse_time
+        super().__init__(parent, 'Edit line %d' % number, 600, 330)
+        self._parse = parse_time
+        self.line = line
+        self.play = play
+        self.split_cursor = None
+        self._auto_realign = True
+        self.lay.addWidget(link_label('The words and times of this line. Saving updates the lyrics box, the waveform '
+                                      'and the exported files. <b>Enter</b> saves, <b>Esc</b> cancels.', 'plain'))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(10)
+        lab = QLabel('Line')
+        lab.setObjectName('sub')
+        grid.addWidget(lab, 0, 0)
+        self.text = QLineEdit(line['text'])
+        self.text.setObjectName('editText')
+        self.text.setPlaceholderText('The words of this line')
+        self.text.textChanged.connect(self._text_changed)
+        grid.addWidget(self.text, 0, 1, 1, 6)
+        self.fields = {}
+        for r, (key, label) in enumerate((('start', 'Start'), ('end', 'End')), start=1):
+            lab = QLabel(label)
+            lab.setObjectName('sub')
+            grid.addWidget(lab, r, 0)
+            f = QLineEdit(fmt_edit_time(line[key]))
+            f.setFixedWidth(108)
+            f.setAlignment(Qt.AlignCenter)
+            f.setToolTip('mm:ss.xxx (also ss.xx or m:ss)')
+            f.textChanged.connect(self._validate)
+            self.fields[key] = f
+            grid.addWidget(f, r, 1)
+            for c, (txt, d) in enumerate((('−0.1', -0.1), ('−0.01', -0.01), ('+0.01', 0.01), ('+0.1', 0.1)), start=2):
+                b = PillButton(txt)
+                b.setFixedWidth(58)
+                b.setAutoDefault(False)
+                b.setToolTip('%s %+g s' % (label, d))
+                b.clicked.connect(lambda _=False, k=key, d=d: self._nudge(k, d))
+                grid.addWidget(b, r, c)
+        grid.setColumnStretch(6, 1)
+        self.lay.addLayout(grid)
+        row = QHBoxLayout()
+        self.btn_play = PillButton('▶  Play line')
+        self.btn_play.setAutoDefault(False)
+        self.btn_play.setToolTip('Play this line from Start to End')
+        self.btn_play.clicked.connect(self._play)
+        self.btn_play.setEnabled(play is not None)
+        self.btn_split = PillButton('Split at cursor')
+        self.btn_split.setAutoDefault(False)
+        self.btn_split.setToolTip('Split the line where the text cursor is (the time is divided by the characters)')
+        self.btn_split.clicked.connect(self._split)
+        row.addWidget(self.btn_play)
+        row.addWidget(self.btn_split)
+        row.addStretch(1)
+        self.lay.addLayout(row)
+        self.realign = QCheckBox('Re-align this line after saving (fixes the timing after big word changes)')
+        self.realign.setEnabled(can_realign)
+        self.realign.toggled.connect(lambda _v: setattr(self, '_auto_realign', False))
+        self.lay.addWidget(self.realign)
+        self.err = QLabel('')
+        self.err.setObjectName('hint')
+        self.err.setStyleSheet('color: %s;' % AMBER)
+        self.lay.addWidget(self.err)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_cancel = PillButton('Cancel')
+        self.btn_cancel.setAutoDefault(False)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_save = PillButton('Save', 'primary')
+        self.btn_save.setDefault(True)
+        self.btn_save.clicked.connect(self._save)
+        for b in (self.btn_cancel, self.btn_save):
+            b.setMinimumWidth(96)
+            row.addWidget(b)
+        self.lay.addLayout(row)
+        self.text.setFocus()
+        self.text.selectAll()
+
+    def _time(self, key):
+        return self._parse(self.fields[key].text())
+
+    def _validate(self, *_a):
+        s, e = self._time('start'), self._time('end')
+        msg = ''
+        if not self.text.text().strip():
+            msg = 'The line needs at least one word.'
+        elif s is None or e is None:
+            msg = 'Times are mm:ss.xxx, for example 01:02.345.'
+        elif e <= s:
+            msg = 'End must be after Start.'
+        self.err.setText(msg)
+        self.btn_save.setEnabled(not msg)
+        return not msg
+
+    def _text_changed(self, t):
+        if self._auto_realign and self.realign.isEnabled():
+            self.realign.blockSignals(True)
+            self.realign.setChecked(words_changed(self.line['text'], t) >= self.REALIGN_AT)
+            self.realign.blockSignals(False)
+        self._validate()
+
+    def _nudge(self, key, d):
+        t = self._time(key)
+        if t is not None:
+            self.fields[key].setText(fmt_edit_time(t + d))
+
+    def _play(self):
+        s, e = self._time('start'), self._time('end')
+        if self.play and s is not None and e is not None:
+            self.play(s, max(e, s + 0.1))
+
+    def _split(self):
+        if self._validate():
+            self.split_cursor = self.text.cursorPosition()
+            self.accept()
+
+    def _save(self):
+        if self._validate():
+            self.accept()
+
+    def values(self):
+        return (self.text.text().strip(), self._time('start'), self._time('end'),
+                self.realign.isChecked() and self.realign.isEnabled())
+
+
+class KeepEditsDialog(GlassDialog):
+    """Transcribe / Auto-sync would replace lines edited by hand: Keep my edits / Replace."""
+
+    def __init__(self, parent, songs, action):
+        super().__init__(parent, 'Replace your edits?', 560, 270)
+        self.choice = 'keep'
+        names = ', '.join('“%s”' % s.label() for s in songs[:3]) + (' and %d more' % (len(songs) - 3) if len(songs) > 3 else '')
+        what = ('Transcribe replaces the lines, words and times with what Whisper hears.' if action == 'transcribe' else
+                'Auto-sync re-aligns every line with the words in the lyrics box (your edited words are kept there), '
+                'but the times you set by hand are replaced.')
+        self.lay.addWidget(link_label('You edited the lines of %s in the review list.<br><br>%s<br><br>'
+                                      'Either way you can undo it with <b>Ctrl+Z</b>.' % (names.replace('<', '&lt;'), what), 'plain'))
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_keep = PillButton('Keep my edits')
+        self.btn_keep.clicked.connect(self.reject)
+        self.btn_replace = PillButton('Replace', 'primary')
+        self.btn_replace.clicked.connect(self._replace)
+        for b in (self.btn_keep, self.btn_replace):
+            b.setMinimumWidth(120)
+            row.addWidget(b)
+        self.btn_keep.setDefault(True)
+        self.lay.addLayout(row)
+
+    def _replace(self):
+        self.choice = 'replace'
+        self.accept()
+
+    def reject(self):
+        self.choice = 'keep'
+        super().reject()
+
+
+RED = '#ff5d5d'
+
+
+def _esc(t):
+    return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def export_summary(report):
+    """'12 files saved for 3 songs' (+ skipped / failed counts) from App.last_export."""
+    ok = [e for e in report if e['status'] == 'ok']
+    n = sum(len(e['files']) for e in ok)
+    txt = '%d file%s saved for %d song%s' % (n, '' if n == 1 else 's', len(ok), '' if len(ok) == 1 else 's')
+    sk = sum(1 for e in report if e['status'] == 'skipped')
+    fa = sum(1 for e in report if e['status'] == 'failed')
+    if sk:
+        txt += ' · %d skipped' % sk
+    if fa:
+        txt += ' · %d failed' % fa
+    return txt
+
+
+def export_details_html(report):
+    """Problems first (failed in red, skipped in amber, with the reason), then the songs written:
+    full folder path and the file names."""
+    order = {'failed': 0, 'skipped': 1, 'ok': 2}
+    rows = []
+    for e in sorted(report, key=lambda e: order.get(e['status'], 3)):
+        head = '<b>%s</b>' % _esc(e['label'])
+        folder = ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''
+        if e['status'] == 'ok':
+            names = ' · '.join(_esc(os.path.basename(f)) for f in e['files'])
+            rows.append('%s — %d file%s%s<br>%s' % (head, len(e['files']), '' if len(e['files']) == 1 else 's', folder, names))
+        elif e['status'] == 'skipped':
+            rows.append('%s<br><span style="color:%s">⚠ Skipped: %s</span>%s' % (head, AMBER, _esc(e['reason']), folder))
+        else:
+            rows.append('%s<br><span style="color:%s">✕ Failed: %s</span>%s' % (head, RED, _esc(e['reason']), folder))
+    return ''.join('<p style="margin-top:0; margin-bottom:10px; line-height:130%%">%s</p>' % r for r in rows)
+
+
+class ExportDoneDialog(GlassDialog):
+    """After Export: what was written where (full folder paths), skipped / failed songs in amber /
+    red with the reason; Open folder and OK. Stays until dismissed (not modal)."""
+
+    def __init__(self, parent, report, closing=False):
+        problems = any(e['status'] != 'ok' for e in report)
+        title = ('Not closed: some lyrics were not saved' if closing else
+                 'Export finished with problems' if problems else 'Export finished')
+        super().__init__(parent, title, 660, 470)
+        self.setModal(False)
+        self.report = report
+        self.folders = []
+        for e in report:
+            if e['status'] == 'ok' and e['dir'] and e['dir'] not in self.folders:
+                self.folders.append(e['dir'])
+        self.summary = QLabel(('<span style="color:%s">●</span> ' % ('#3ecf8e' if not problems else AMBER)) + export_summary(report))
+        self.summary.setObjectName('h2')
+        self.summary.setTextFormat(Qt.RichText)
+        self.lay.addWidget(self.summary)
+        if closing:
+            self.lay.addWidget(link_label('The window stays open so nothing is lost. Fix the problem below (or use '
+                                          '<b>Close without saving</b>) and close again.', 'plain'))
+        self.details = QTextBrowser()
+        self.details.setObjectName('exportList')
+        self.details.setOpenLinks(False)
+        self.details.setHtml(export_details_html(report))
+        self.details.setMinimumHeight(230)
+        multi = len(report) > 1
+        self.btn_toggle = PillButton('Hide files ▴' if not multi or problems else 'Show files ▾')
+        self.btn_toggle.setAutoDefault(False)
+        self.btn_toggle.clicked.connect(self._toggle)
+        self.btn_toggle.setVisible(multi)
+        self.lay.addWidget(self.btn_toggle, 0, Qt.AlignLeft)
+        self.lay.addWidget(self.details, 1)
+        self.details.setVisible(not multi or problems)
+        self.spacer = QWidget()
+        self.lay.addWidget(self.spacer, 1)
+        self.spacer.setVisible(not self.details.isVisible())
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_open = PillButton('Open folder')
+        self.btn_open.setAutoDefault(False)
+        self.btn_open.setEnabled(bool(self.folders))
+        self.btn_open.setToolTip('\n'.join(self.folders))
+        self.btn_open.clicked.connect(self._open)
+        self.btn_ok = PillButton('OK', 'primary')
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self.accept)
+        for b in (self.btn_open, self.btn_ok):
+            b.setMinimumWidth(110)
+            row.addWidget(b)
+        self.lay.addLayout(row)
+
+    def _toggle(self):
+        v = not self.details.isVisible()
+        self.details.setVisible(v)
+        self.spacer.setVisible(not v)
+        self.btn_toggle.setText('Hide files ▴' if v else 'Show files ▾')
+
+    def _open(self):
+        if len(self.folders) == 1:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.folders[0]))
+            return
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        for d in self.folders:
+            m.addAction(d, lambda d=d: QDesktopServices.openUrl(QUrl.fromLocalFile(d)))
+        m.exec(self.btn_open.mapToGlobal(self.btn_open.rect().bottomLeft()))
+
+
+class AskDialog(GlassDialog):
+    """A glass question with custom buttons [(label, key, kind)]; Esc / ✕ = `cancel_key`."""
+
+    def __init__(self, parent, title, html, buttons, cancel_key='cancel', w=560, h=300, items=None):
+        super().__init__(parent, title, w, h)
+        self.choice = cancel_key
+        self.cancel_key = cancel_key
+        self.lay.addWidget(link_label(html, 'plain'))
+        if items:
+            lst = QTextBrowser()
+            lst.setObjectName('askList')
+            lst.setHtml('<div style="line-height:140%">' + '<br>'.join(
+                '<span style="color:%s">●</span> %s' % (ACCENT, _esc(i)) for i in items) + '</div>')
+            lst.setMaximumHeight(min(160, 34 + 24 * len(items)))
+            self.lay.addWidget(lst)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.buttons = {}
+        for label, key, kind in buttons:
+            b = PillButton(label, kind)
+            b.setMinimumWidth(120)
+            b.setAutoDefault(False)
+            b.clicked.connect(lambda _=False, k=key: self._pick(k))
+            row.addWidget(b)
+            self.buttons[key] = b
+            if kind == 'primary':
+                b.setDefault(True)
+        self.lay.addLayout(row)
+
+    def _pick(self, k):
+        self.choice = k
+        self.accept()
+
+    def reject(self):
+        self.choice = self.cancel_key
+        super().reject()
+
+
+def unsaved_dialog(parent, songs, action='close'):
+    n = len(songs)
+    when = 'before the update restarts the app' if action == 'update' else 'before you close'
+    return AskDialog(parent, 'Unsaved lyrics',
+                     '<span style="font-size:15px;font-weight:600">You have unsaved lyrics for %d song%s</span><br>'
+                     'These songs were synced, transcribed or edited but not exported yet. Export them %s, or they are lost.'
+                     % (n, '' if n == 1 else 's', when),
+                     [('Cancel', 'cancel', 'ghost'), ('Close without saving', 'discard', 'ghost'),
+                      ('Export all & close', 'export', 'primary')], w=600, h=330 + min(5, n) * 10,
+                     items=[s.label() for s in songs])
+
+
+def remove_dialog(parent, songs):
+    n = len(songs)
+    return AskDialog(parent, 'Remove unsaved song%s?' % ('' if n == 1 else 's'),
+                     '%s not exported yet. Removing %s from the library loses the synced lines.' % (
+                         ('<b>%s</b> is' % _esc(songs[0].label())) if n == 1 else '<b>%d songs</b> are' % n,
+                         'it' if n == 1 else 'them'),
+                     [('Cancel', 'cancel', 'ghost'), ('Remove', 'remove', 'primary')], w=540, h=250,
+                     items=[s.label() for s in songs] if n > 1 else None)

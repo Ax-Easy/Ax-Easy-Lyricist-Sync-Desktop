@@ -49,7 +49,10 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
    and status. The title bar shows where the engine runs: **CUDA · NVIDIA GeForce RTX 3090**, or **CPU**.
 3. Review the result:
    - Click **▶** to play from a line.
-   - Select a line and nudge its start by **±0.1 s** or **±0.01 s**, or double-click a start time to type a new one.
+   - Select a line and nudge its start by **±0.1 s** or **±0.01 s**, or double-click a start or end time to type a
+     new one (`mm:ss.xxx`).
+   - **Edit the lines in the list** (see *Editing lines* below): double-click the words or press **F2** to edit them in
+     place, or right-click → **Edit Line…**.
    - `↻` marks a detected repeat. *too long* or *too short* flags an implausible line duration.
    - An amber **● check** marks a line the engine is unsure about; hover over it to see why. This is typical of
      choirs and backing vocals.
@@ -71,7 +74,10 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
      | ↑ / ↓ | select the previous / next line (in the song list they move between songs) |
      | ← / → | nudge the selected line by 0.1 s; with Shift by 0.01 s |
      | S | stamp: the selected line starts at the playhead, and the next line is selected |
-     | Delete | remove the selected ♪ line |
+     | Delete | delete the selected line (Ctrl+Z brings it back) |
+     | F2 | edit the words of the selected line in place (Enter saves, Esc cancels) |
+     | Enter | open **Edit Line…** for the selected line |
+     | Ctrl+Z / Ctrl+Y | undo / redo the last change in the line list (Ctrl+Shift+Z also redoes) |
      | F11 | full screen (Esc leaves it) |
    - **♪ in instrumental parts**: when nothing is sung for longer than a threshold, a **♪** line is added, so a
      lyric display shows ♪ instead of the last sung line during intros, solos, breaks and the outro.
@@ -97,6 +103,31 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
        the aligner, because the song analysis is cached.
      - Against made-up text: Whisper only hears where the vocals stem is active, and segments with no vocals
        under them, loops, gibberish, humming and filler like "Thank you for watching" are dropped.
+   - **Editing lines** (1.3.1). Every change updates the lyrics box, the waveform markers and the exported files.
+     - **In place**: double-click the words (or **F2**) to edit them; double-click a start or end time to type it
+       as `mm:ss.xxx`. **Enter** saves, **Esc** cancels. Right-click inside the text editor → **Split line at
+       cursor**.
+     - **Edit Line…** (right-click, or **Enter** on a line): a small dialog with the **Line** text (any language,
+       Greek included), **Start** and **End** (`mm:ss.xxx`, with **−0.1 / −0.01 / +0.01 / +0.1**), **▶ Play line**
+       (plays from Start to End), **Split at cursor**, the option **Re-align this line after saving (fixes the
+       timing after big word changes)**, and **Cancel / Save**. Enter saves, Esc cancels. The Re-align option is
+       ticked for you when 40 % or more of the words changed.
+     - **Right-click menu**: **Edit Line…**, **Play from line**, **Re-sync from here**, **Re-align this line**,
+       **Split line at cursor**, **Merge with next**, **Insert line above**, **Insert line below**, **Insert ♪
+       here**, **Mark as ♪** / **Unmark ♪ (make it a sung line)**, **♪ settings…**, **Undo**, **Redo**, **Delete line**.
+     - Editing the words keeps the times. The line's amber **● check** and amber words go away and the note says
+       **✎ edited**. When a chorus line repeats (`↻`), changing its words changes every repeat of it.
+     - **Split line at cursor** splits at the text cursor (in place or in Edit Line…), otherwise at the playhead when
+       it is inside the line, otherwise at the word nearest the middle; the time is divided in proportion to the
+       characters. **Merge with next** joins a line with the next (start of the first, end of the second).
+     - **Insert line above / below** puts a *New line* in the gap there (or in half of the line when there is no
+       gap) and opens it for typing.
+     - **Re-align this line** runs the aligner again for that line only, between the end of the line before and the
+       start of the line after. It takes well under a second when the song analysis is cached.
+     - **Undo / Redo** (**Ctrl+Z / Ctrl+Y**, or the **↶ ↷** buttons next to Re-sync) for every change in the line
+       list, separately for each song. Nudging one line with the arrow keys counts as one step.
+     - **Transcribe** or **Auto-sync** on a song you edited asks first: **Keep my edits** or **Replace** (Replace
+       can be undone with Ctrl+Z too).
    - **Engine settings** (the **Engine** button): the detected hardware, the Whisper model in use and a dropdown
      (**Auto**, small, medium, large-v3-turbo, large-v3, with size, speed and accuracy). Picking a model that
      isn't downloaded yet downloads it right there, with per-step progress, resume and SHA256 check. Models not
@@ -107,7 +138,15 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
      one folder for several songs, select them and use **Set folder for selected…**. All of this is remembered.
    - Existing files are never overwritten silently. You choose **Overwrite / Keep both / Skip**, with "do the
      same for the other songs".
-   - When the export finishes, **Open folder** links appear.
+   - When the export finishes, a confirmation opens and stays until you close it: the summary (*12 files saved for
+     3 songs*), and per song the full folder path and the files written. Skipped songs show in amber and failed
+     ones in red, each with the reason. With several songs the list folds away behind **Show files ▾**. Buttons:
+     **Open folder** and **OK**.
+   - **Unsaved lyrics**: a song is marked with **●** in the song list after Auto-sync, Transcribe or any edit, until
+     it is exported. Closing the window (✕, Alt+F4, or the restart of an update) with marked songs asks **You have
+     unsaved lyrics for N songs**, lists them, and offers **Export all & close** (each song goes to its own save
+     location; the window closes only if every song was saved), **Close without saving** and **Cancel**. Removing
+     a marked song from the list asks too (**Remove** / **Cancel**).
    - Tick **TTML / LRC / SRT / VTT**; all four are on by default.
    - Files are named `Artist - Title.ext` from the ID3 tags, or from the audio file name when there are no tags.
      Greek names are kept.
