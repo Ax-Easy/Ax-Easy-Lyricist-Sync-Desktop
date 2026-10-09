@@ -181,7 +181,10 @@ def render_maximized(out_dir, fixture_dir=None):
     2560×1440 (one process: three virtual screens side by side). Offscreen screens have no
     taskbar, so the work area is the whole screen here."""
     sizes = ((1280, 720), (1920, 1080), (2560, 1440))
-    cfg = os.path.join(tempfile.mkdtemp(prefix='lsync-scr-'), 'screens.json')
+    os.makedirs(out_dir, exist_ok=True)
+    # next to the screenshots, passed as a relative path: the platform string is split at ':' so
+    # a Windows drive letter ('C:/...') would cut it in two
+    cfg = os.path.join(out_dir, 'screens.json')
     x = 0
     scr = []
     for w, h in sizes:
@@ -190,7 +193,11 @@ def render_maximized(out_dir, fixture_dir=None):
     with open(cfg, 'w') as f:
         json.dump({'screens': scr}, f)
     if QApplication.instance() is None:
-        os.environ['QT_QPA_PLATFORM'] = 'offscreen:configfile=' + cfg.replace('\\', '/')
+        try:
+            rel = os.path.relpath(cfg)
+        except ValueError:   # another drive
+            rel = cfg
+        os.environ['QT_QPA_PLATFORM'] = 'offscreen:configfile=' + rel.replace('\\', '/')
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
     from PySide6.QtCore import QPoint as _P
