@@ -784,7 +784,7 @@ class UpdateDialog(GlassDialog):
             # read-only location (or App Translocation): the verified DMG is open in Finder
             self.app._closing_ok = False
             self.info.setText('Signature and notarization verified. The new version is open in Finder: drag '
-                              '<b>Lyricist Sync</b> onto <b>Applications</b> (Replace), then quit this copy (⌘Q) '
+                              '<b>Lyricist Sync Desktop</b> onto <b>Applications</b> (Replace), then quit this copy (⌘Q) '
                               'and start the new one.')
             self._set_buttons('failed_dl')
             return

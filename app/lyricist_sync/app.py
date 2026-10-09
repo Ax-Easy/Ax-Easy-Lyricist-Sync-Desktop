@@ -663,7 +663,7 @@ def _install_file_open_handler(qapp, app):
 
 def run_gui(argv):
     qapp = QApplication.instance() or QApplication(argv)
-    qapp.setApplicationName('Ax-Easy Lyricist Sync')
+    qapp.setApplicationName(meta.APP_NAME)
     qapp.setOrganizationName('Ax-Easy')
     from PySide6.QtGui import QIcon
     qapp.setWindowIcon(QIcon(paths.resource('res', 'icon.svg')))

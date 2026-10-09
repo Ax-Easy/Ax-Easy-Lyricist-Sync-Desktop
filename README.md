@@ -1,12 +1,12 @@
-# Ax-Easy Lyricist Sync
+# Ax-Easy Lyricist Sync Desktop
 
 **Paste the lyrics, drop in the song, get perfectly timed lyric files.**
-Lyricist Sync is a desktop app for **Windows and macOS** that auto-syncs lyrics to a recording, line by line, and
+Lyricist Sync Desktop is a desktop app for **Windows and macOS** that auto-syncs lyrics to a recording, line by line, and
 exports **TTML, LRC, SRT and VTT**. It runs entirely on your computer: vocals are separated with Demucs, listened to
 with Whisper and aligned with Meta's MMS forced aligner, on an NVIDIA GPU, an Apple Silicon GPU or the CPU.
 No account, no upload, no cloud.
 
-![Lyricist Sync after an Auto-sync: song queue, waveform with line markers, timed line list](docs/screenshots/hero-dark.webp)
+![Lyricist Sync Desktop after an Auto-sync: song queue, waveform with line markers, timed line list](docs/screenshots/hero-dark.webp)
 
 Made by [Ax-Easy](https://www.ax-easy.com) with the help of [Grok](https://grok.com)
 Inspired by the music of [Monitored](https://www.monitored.gr)
@@ -15,12 +15,12 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 
 | | File | |
 |---|---|---|
-| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Setup-1.3.1.exe](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Setup-1.3.1.exe) | per-user installer, about 41 MB |
-| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
-| **Manual** (English) | [AxEasy-LyricistSync-Manual-EN.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-EN.pdf) | |
-| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Manual-GR.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-GR.pdf) | |
+| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe) | per-user installer, about 41 MB |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
+| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | |
+| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | |
 
-Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/lyricist-sync/releases).
+Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases).
 
 ## Features
 
@@ -53,7 +53,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 
 | Dark | Light |
 |---|---|
-| ![Lyricist Sync on macOS (dark)](docs/screenshots/mac-main-dark.webp) | ![Lyricist Sync on macOS (light)](docs/screenshots/mac-main-light.webp) |
+| ![Lyricist Sync Desktop on macOS (dark)](docs/screenshots/mac-main-dark.webp) | ![Lyricist Sync Desktop on macOS (light)](docs/screenshots/mac-main-light.webp) |
 
 ## System requirements
 
@@ -70,7 +70,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 1. **Install.**
    - *Windows*: run the installer (no admin rights needed). It isn't code-signed yet, so SmartScreen may say
      *"Windows protected your PC"* → **More info → Run anyway**.
-   - *macOS*: open the DMG and drag **Lyricist Sync** onto **Applications**. The app is signed with a Developer ID
+   - *macOS*: open the DMG and drag **Lyricist Sync Desktop** onto **Applications**. The app is signed with a Developer ID
      and notarized by Apple, so it opens without warnings.
 2. **First run**: the setup window downloads the sync engine (Python, PyTorch for your hardware, the Demucs,
    Whisper and MMS models) into your user folder – 7 steps, each SHA-256 checked, pausable and resumable.
@@ -79,22 +79,22 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 4. Press **Auto-sync** (or **Transcribe** when you have no lyrics). Check the amber lines, nudge or edit if needed.
 5. **Export** – TTML, LRC, SRT and VTT next to the audio or in a folder you choose.
 
-The full guide is in the manual ([English](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-EN.pdf) ·
-[Ελληνικά](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-GR.pdf)) and below.
+The full guide is in the manual ([English](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) ·
+[Ελληνικά](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-GR.pdf)) and below.
 
 ## On macOS
 
 - One **universal** app for Apple Silicon and Intel; the first-run setup downloads the PyTorch build for your Mac
   into `~/Library/Application Support/Ax-Easy/LyricistSync` (Apple Silicon: current PyTorch with **Metal / MPS** and an
   automatic CPU fallback for anything Metal can't run; Intel: PyTorch 2.2.2, the last release for Intel Macs, on the CPU).
-- Mac conventions: the menu bar (**Lyricist Sync ▸ About, Check for Updates…, Settings… ⌘,, Quit ⌘Q** – Quit asks about
+- Mac conventions: the menu bar (**Lyricist Sync Desktop ▸ About, Check for Updates…, Settings… ⌘,, Quit ⌘Q** – Quit asks about
   unsaved lyrics first), **⌘** shortcuts (⌘O add songs, ⌘S export, ⌘R auto-sync, ⇧⌘T transcribe, ⌘Z / ⇧⌘Z undo / redo,
   ⇧⌘L light / dark), the native traffic-light title bar, full screen with the green button or **⌃⌘F**, **⌫** deletes
   the selected line, and **Reveal in Finder**.
 - **Updates**: *Check for Updates…* downloads the new DMG, checks its SHA-256, the Apple code signature, the
   Ax-Easy Team ID (7BMSHL4YZ6) and Gatekeeper, then replaces the app in place and restarts it. If the app can't be
   replaced where it is (for example a read-only folder), the DMG opens so you can drag the new version to Applications.
-- **Not on the Mac App Store**: App Store apps may not download and run code after installation, and Lyricist Sync's
+- **Not on the Mac App Store**: App Store apps may not download and run code after installation, and Lyricist Sync Desktop's
   first-run setup downloads its engine (Python and PyTorch) at runtime, sized for each Mac. It is distributed as a
   notarized DMG instead.
 
@@ -254,7 +254,7 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 
 ### Updates
 
-The **Update** button next to About (macOS: *Lyricist Sync ▸ Check for Updates…*) checks
+The **Update** button next to About (macOS: *Lyricist Sync Desktop ▸ Check for Updates…*) checks
 `https://www.ax-easy.com/lyricist-sync/update.json`.
 - The quiet check on start runs at most once a day, and can be switched off in the update window.
 - The badge dot means a new version is out.
@@ -273,9 +273,9 @@ fields are:
 
 ```json
 {"version": "1.3.1", "date": "2026-10-09", "notes": "…",
- "url": "https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Setup-1.3.1.exe",
+ "url": "https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe",
  "sha256": "…", "size": 41396276, "minimum_os": "10.0.17763",
- "mac": {"url": "https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg",
+ "mac": {"url": "https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg",
          "sha256": "…", "size": 0, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
 ```
 
@@ -311,7 +311,7 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Setup-1.3.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
 - macOS: the DMG (about 94 MB) holds the universal app; drag it to Applications.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`

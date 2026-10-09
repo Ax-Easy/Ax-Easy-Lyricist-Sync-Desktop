@@ -1,4 +1,4 @@
-Ax-Easy Lyricist Sync
+Ax-Easy Lyricist Sync Desktop
 Copyright © 2026 Ax-Easy (Evangelos Makrydakis). All rights reserved.
 
 SOURCE-AVAILABLE, VIEW-ONLY LICENSE
@@ -12,7 +12,7 @@ SOURCE-AVAILABLE, VIEW-ONLY LICENSE
 
 3. Official binaries. You may download, install and run the official binaries of Ax-Easy Lyricist
    Sync published by Ax-Easy (the Windows installer and the macOS disk image attached to the
-   GitHub releases of Ax-Easy/lyricist-sync, or offered on ax-easy.com) for your personal use,
+   GitHub releases of Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop, or offered on ax-easy.com) for your personal use,
    including making lyric files for your own songs. You may not redistribute, resell, or modify
    those binaries, except where a third-party license grants you that right (for example, the
    LGPL-3.0 right to replace the Qt / PySide6 libraries and to reverse-engineer the binaries to
@@ -23,7 +23,7 @@ SOURCE-AVAILABLE, VIEW-ONLY LICENSE
    within GitHub). That permission is limited to GitHub's own features; it does not grant any right
    to use, modify, or distribute the code outside of them.
 
-5. Third-party components. Ax-Easy Lyricist Sync uses and downloads third-party software and
+5. Third-party components. Ax-Easy Lyricist Sync Desktop uses and downloads third-party software and
    models. They are not covered by this notice: each stays under its own license, listed in
    THIRD_PARTY_NOTICES.md. Nothing in this notice restricts the rights those licenses give you.
    In particular, the Qt / PySide6 libraries (LGPL-3.0) in the official binaries are dynamically

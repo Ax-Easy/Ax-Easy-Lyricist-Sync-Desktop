@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sign "Lyricist Sync.app" inside-out with the Developer ID (hardened runtime + secure timestamp):
+# Sign "Lyricist Sync Desktop.app" inside-out with the Developer ID (hardened runtime + secure timestamp):
 # every nested Mach-O (dylibs, .so, Qt plugins, helper executables) first, then the .framework bundles,
 # then the app with mac/entitlements.plist. No --deep (Apple discourages it for signing).
 #   mac/sign.sh APP IDENTITY [KEYCHAIN]     (IDENTITY "-" = ad-hoc, for unsigned PR builds)

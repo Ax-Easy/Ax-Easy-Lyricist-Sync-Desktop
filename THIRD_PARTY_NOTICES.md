@@ -1,12 +1,12 @@
 # Third-party notices
 
-Ax-Easy Lyricist Sync is © 2026 Ax-Easy (Evangelos Makrydakis), all rights reserved (see [LICENSE](LICENSE)).
+Ax-Easy Lyricist Sync Desktop is © 2026 Ax-Easy (Evangelos Makrydakis), all rights reserved (see [LICENSE](LICENSE)).
 It is built on, and downloads, the third-party software and models below. **Each of them stays under its own
-license**; the Lyricist Sync license does not change or restrict any of the rights those licenses give you.
+license**; the Lyricist Sync Desktop license does not change or restrict any of the rights those licenses give you.
 
 There are two groups:
 
-* **Bundled** – inside the Windows installer / the macOS app (`LyricistSync.exe` folder, `Lyricist Sync.app`).
+* **Bundled** – inside the Windows installer / the macOS app (`LyricistSync.exe` folder, `Lyricist Sync Desktop.app`).
 * **Downloaded on first run** – fetched by the setup window straight from their official hosts (python-build-standalone
   on GitHub, PyPI, download.pytorch.org, Meta's and OpenAI's model servers), SHA-256 checked, and installed into
   your user folder (`%LOCALAPPDATA%\Ax-Easy\LyricistSync` on Windows, `~/Library/Application Support/Ax-Easy/LyricistSync`
@@ -30,14 +30,14 @@ The official binaries use Qt and PySide6 **unmodified** and **dynamically linked
 LGPL-3.0 allows for an application under another license:
 
 * **Windows:** `PySide6\Qt6*.dll`, `PySide6\plugins\…`, `shiboken6\…` in the install folder.
-* **macOS:** `Lyricist Sync.app/Contents/Frameworks/PySide6/Qt/lib/Qt*.framework` and the Qt plugins next to them.
+* **macOS:** `Lyricist Sync Desktop.app/Contents/Frameworks/PySide6/Qt/lib/Qt*.framework` and the Qt plugins next to them.
 
 You may replace these libraries with your own build of the same Qt / PySide6 version (or a compatible one); the app
-loads whatever is in that folder. On macOS, re-sign the bundle afterwards (for example `codesign --force --deep -s - "Lyricist Sync.app"`),
+loads whatever is in that folder. On macOS, re-sign the bundle afterwards (for example `codesign --force --deep -s - "Lyricist Sync Desktop.app"`),
 because changing a signed app breaks its Developer ID signature. The complete source of Qt and PySide6 is available from
 the URLs above (Qt 6.12.0 / 6.7.3 and PySide6 6.12.0 / 6.7.3 tags); the LGPL-3.0 and GPL-3.0 texts are at
 https://www.gnu.org/licenses/lgpl-3.0.html and https://www.gnu.org/licenses/gpl-3.0.html, and the Qt license
-files ship inside the PySide6 folders of the app. No reverse-engineering restriction in the Lyricist Sync license applies to
+files ship inside the PySide6 folders of the app. No reverse-engineering restriction in the Lyricist Sync Desktop license applies to
 debugging such a modification.
 
 ## Downloaded on first run (the engine)
@@ -62,6 +62,6 @@ The exact versions and SHA-256 hashes are in `app/lyricist_sync/manifest.json` (
 
 ### MMS_FA is non-commercial
 
-The forced aligner that places the lyric lines on the audio uses Meta's MMS_FA model under **CC BY-NC 4.0**. Lyricist Sync
+The forced aligner that places the lyric lines on the audio uses Meta's MMS_FA model under **CC BY-NC 4.0**. Lyricist Sync Desktop
 is free and is meant for personal, non-commercial use; if you want to use it commercially, you are responsible for
 complying with that license (or for using a different aligner).
