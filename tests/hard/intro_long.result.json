@@ -1,0 +1,85 @@
+{
+ "lines": [
+  {
+   "idx": 0,
+   "text": "Remember us as we were before",
+   "start": 32.025,
+   "end": 33.786,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 1,
+   "text": "Under the lights of a quiet town",
+   "start": 34.887,
+   "end": 36.848,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 2,
+   "text": "Nothing was broken, nothing was sold",
+   "start": 37.929,
+   "end": 40.671,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  },
+  {
+   "idx": 3,
+   "text": "We kept the fire and never let go",
+   "start": 41.712,
+   "end": 44.214,
+   "repeat": false,
+   "flag": "",
+   "conf": 1.0,
+   "why": []
+  }
+ ],
+ "duration": 52.0,
+ "language": "en",
+ "repeats": [],
+ "device": "cpu",
+ "stem": "htdemucs",
+ "low_conf": 0,
+ "version": 3,
+ "timings": {
+  "decode": 0.17,
+  "separate": 14.85,
+  "transcribe": 8.79,
+  "emissions": 8.33,
+  "align": 0.01,
+  "total": 32.17
+ },
+ "vocals": [
+  [
+   7.98,
+   12.99
+  ],
+  [
+   23.11,
+   28.97
+  ],
+  [
+   31.97,
+   33.86
+  ],
+  [
+   34.8,
+   36.94
+  ],
+  [
+   37.88,
+   40.69
+  ],
+  [
+   41.66,
+   44.48
+  ]
+ ]
+}

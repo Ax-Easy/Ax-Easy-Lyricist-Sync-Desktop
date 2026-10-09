@@ -280,6 +280,7 @@ class ReviewTable(QTableWidget):
         for i, w in ((0, 34), (2, 84), (3, 84), (4, 92)):
             self.setColumnWidth(i, w)
         self.cellClicked.connect(lambda r, c: self.play_line.emit(r) if c == 0 else None)
+        self._active_row = -1   # the line playing now (painted by GlassRowDelegate)
 
 
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem  # noqa: E402
@@ -298,8 +299,27 @@ class GlassRowDelegate(QStyledItemDelegate):
         view = self.view
         row_sel = view.selectionModel().isRowSelected(idx.row(), idx.parent()) if view.selectionModel() else False
         hover = bool(opt.state & QStyle.StateFlag.State_MouseOver)
+        active = getattr(view, '_active_row', -1) == idx.row()
+        inst = idx.column() >= 0 and view.model().index(idx.row(), 1).data(Qt.UserRole + 1) == 'inst'
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
+        if inst or active:
+            first = view.visualRect(view.model().index(idx.row(), 0))
+            last = view.visualRect(view.model().index(idx.row(), view.model().columnCount() - 1))
+            full = QRectF(first.left() + 2, opt.rect.top() + 2, last.right() - first.left() - 4, opt.rect.height() - 4)
+            path = QPainterPath()
+            path.addRoundedRect(full, 9, 9)
+            p.setClipRect(opt.rect)
+            if inst:   # ♪ rows: a quiet violet band
+                p.fillPath(path, QColor(143, 123, 255, 30 if STATE['dark'] else 24))
+            if active:  # the line playing now: accent glow + a bar on the left
+                g = QLinearGradient(full.left(), 0, full.right(), 0)
+                g.setColorAt(0, QColor(255, 106, 1, 90 if STATE['dark'] else 70))
+                g.setColorAt(1, QColor(255, 106, 1, 8))
+                p.fillPath(path, QBrush(g))
+                if idx.column() == 0:
+                    p.fillRect(QRectF(full.left() + 1, full.top() + 5, 3, full.height() - 10), QColor(ACCENT))
+            p.setClipping(False)
         if row_sel or hover:
             first = view.visualRect(view.model().index(idx.row(), 0))
             last = view.visualRect(view.model().index(idx.row(), view.model().columnCount() - 1))

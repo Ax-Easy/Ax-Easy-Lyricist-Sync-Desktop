@@ -2,7 +2,7 @@
 queue, lyrics, review list and footer."""
 import os
 
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap, QShortcut)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -10,10 +10,11 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QSizePolicy, QSpacerItem, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QAbstractSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
 import importlib
-from . import chrome, paths, theme as thememod, winfx
+from . import chrome, instrumental, paths, theme as thememod, winfx
+from .player import INST, AudioCache, Waveform, fmt_clock
 from .chrome import MARGIN, RADIUS
 from .export import SAVE_MODES, export_song, read_tags, target_dir  # noqa: F401  (re-exported for the CLI)
 from .formats import fmt_lrc_time, parse_time
@@ -23,6 +24,11 @@ LOW_CONF = 0.6
 from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, PillButton, ReviewTable, STATE, AMBER
 
 meta = importlib.import_module(__package__)
+
+
+def _now():
+    import time
+    return time.monotonic()
 SAVE_LABELS = {'beside': 'Next to the audio file', 'folder': 'A chosen folder', 'ask': 'Ask every time'}
 
 
@@ -58,6 +64,10 @@ class CaptionButton(QPushButton):
             p.drawLine(c.x() + 4, c.y() - 4, c.x() - 4, c.y() + 4)
         elif self.kind == 'min':
             p.drawLine(c.x() - 5, c.y(), c.x() + 5, c.y())
+        elif self.window().isMaximized() or self.window().isFullScreen():
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(c.x() - 4, c.y() - 2, 7, 7), 1.5, 1.5)
+            p.drawPolyline([QPoint(c.x() - 2, c.y() - 4), QPoint(c.x() + 5, c.y() - 4), QPoint(c.x() + 5, c.y() + 3)])
         else:
             r = QRectF(c.x() - 4, c.y() - 4, 8, 8)
             p.setBrush(Qt.NoBrush)
@@ -148,6 +158,23 @@ class GlassWindow(QWidget, chrome.Frame):
         self.player = QMediaPlayer(self)
         self.audio_out = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_out)
+        self.player.playbackStateChanged.connect(self._playback_changed)
+        self.player.mediaStatusChanged.connect(self._media_status)
+        self.player.positionChanged.connect(self._position_changed)
+        self.player.errorOccurred.connect(lambda _e, msg: self.status_lbl.setText('Playback: %s' % msg) if msg else None)
+        self._src = ''               # what the player has loaded
+        self._pending_seek = None
+        self._pos_anchor = (0.0, 0.0)  # (position s, monotonic time) for a smooth playhead
+        self._active = -1
+        self._normal_geo = None
+        self.audio = AudioCache(self)
+        self.audio.ready.connect(self._audio_ready)
+        self.audio.failed.connect(self._audio_failed)
+        self._tick = QTimer(self)
+        self._tick.setInterval(33)
+        self._tick.timeout.connect(self._update_playhead)
+        QShortcut(QKeySequence(Qt.Key_F11), self, self._toggle_full)
+        QApplication.instance().installEventFilter(self)
 
     def _link_label(self, html):
         l = QLabel(html)
@@ -207,7 +234,7 @@ class GlassWindow(QWidget, chrome.Frame):
             self.queue.setMouseTracking(True)
             self.queue.setItemDelegate(GlassRowDelegate(self.queue, progress_col=2))
             self.queue.itemSelectionChanged.connect(self._song_selected)
-            lay.addWidget(self.queue, 1)
+            lay.addWidget(self.queue, 3)
             self.btn_sync = PillButton('Auto-sync', 'primary')
             self.btn_sync.clicked.connect(lambda: self.app.sync_current())
             self.btn_all = PillButton('Sync all')
@@ -224,6 +251,20 @@ class GlassWindow(QWidget, chrome.Frame):
             self.stage_lbl.setObjectName('hint')
             lay.addWidget(self.progress)
             lay.addWidget(self.stage_lbl)
+            wh = QHBoxLayout()
+            wl = QLabel('Waveform')
+            wl.setObjectName('sub')
+            self.wave_hint = QLabel('click to seek · wheel to zoom · drag a marker to move a line')
+            self.wave_hint.setObjectName('hint')
+            wh.addWidget(wl)
+            wh.addStretch(1)
+            wh.addWidget(self.wave_hint)
+            lay.addLayout(wh)
+            self.wave = Waveform()
+            self.wave.seek.connect(self._seek)
+            self.wave.select.connect(lambda r: self.review.selectRow(r))
+            self.wave.retime.connect(self._retime)
+            lay.addWidget(self.wave, 2)
         return self._card(build)
 
     def _right_card(self):
@@ -267,23 +308,67 @@ class GlassWindow(QWidget, chrome.Frame):
             self.lyrics.textChanged.connect(self._lyrics_edited)
             lay.addWidget(self.lyrics)
 
-            tools = QHBoxLayout()
             self.btn_play = PillButton('▶  Play from line')
+            self.btn_play.setToolTip('Play from the selected line')
             self.btn_play.clicked.connect(lambda: self._play_row(self.review.currentRow()))
+            self.transport = QWidget()
+            tr = QHBoxLayout(self.transport)
+            tr.setContentsMargins(0, 0, 0, 0)
+            tr.setSpacing(6)
+            self.btn_back = PillButton('−2 s')
+            self.btn_back.setToolTip('Back 2 seconds')
+            self.btn_back.clicked.connect(lambda: self._skip(-2.0))
+            self.btn_pp = PillButton('▶', 'primary')
+            self.btn_pp.setToolTip('Play / pause (Space)')
+            self.btn_pp.clicked.connect(self.toggle_play)
+            self.btn_fwd = PillButton('+2 s')
+            self.btn_fwd.setToolTip('Forward 2 seconds')
+            self.btn_fwd.clicked.connect(lambda: self._skip(2.0))
+            for b, w in ((self.btn_back, 58), (self.btn_pp, 54), (self.btn_fwd, 58)):
+                b.setFixedWidth(w)
+                tr.addWidget(b)
+            self.time_lbl = QLabel('0:00.00 / 0:00.00')
+            self.time_lbl.setObjectName('sub')
+            self.time_lbl.setMinimumWidth(128)
+            self.time_lbl.setAlignment(Qt.AlignCenter)
+            tr.addWidget(self.time_lbl)
+            self.speed = QComboBox()
+            for r in (0.5, 0.75, 1.0, 1.25, 1.5):
+                self.speed.addItem('%g×' % r, r)
+            self.speed.setCurrentIndex(2)
+            self.speed.setToolTip('Playback speed')
+            self.speed.currentIndexChanged.connect(lambda _i: self.player.setPlaybackRate(self.speed.currentData()))
+            tr.addWidget(self.speed)
+            tr.addWidget(self.btn_play)
+            tr.addStretch(1)
+            self.low_lbl = QLabel('')
+            self.low_lbl.setObjectName('hint')
+            tr.addWidget(self.low_lbl)
+            self.btn_inst_add = PillButton('+ ♪')
+            self.btn_inst_add.setFixedWidth(54)
+            self.btn_inst_add.setToolTip('Add a ♪ line at the playhead (an instrumental part the automatic detection missed)')
+            self.btn_inst_add.clicked.connect(self._insert_inst)
+            self.btn_inst_cfg = PillButton('♪ …')
+            self.btn_inst_cfg.setFixedWidth(54)
+            self.btn_inst_cfg.setToolTip('♪ lines in instrumental parts: on/off, gap, symbol')
+            self.btn_inst_cfg.clicked.connect(self._inst_settings)
+            lay.addWidget(self.transport)
+            self.transport.hide()
+
+            tools = QHBoxLayout()
             for txt, d in (('−0.1', -0.1), ('−0.01', -0.01), ('+0.01', 0.01), ('+0.1', 0.1)):
                 b = PillButton(txt)
-                b.setFixedWidth(64)
+                b.setFixedWidth(54)
+                b.setToolTip('Move the selected line (← → keys: 0.1 s, with Shift: 0.01 s)')
                 b.clicked.connect(lambda _=False, d=d: self._nudge(d))
                 tools.addWidget(b)
-            tools.addWidget(self.btn_play)
             self.btn_resync = PillButton('⟲  Re-sync from here')
             self.btn_resync.setToolTip('Keep this line where it is now (after you fixed it) and re-align only the lines after it')
             self.btn_resync.clicked.connect(lambda: self._resync_row(self.review.currentRow()))
             tools.addWidget(self.btn_resync)
             tools.addStretch(1)
-            self.low_lbl = QLabel('')
-            self.low_lbl.setObjectName('hint')
-            tools.addWidget(self.low_lbl)
+            tools.addWidget(self.btn_inst_add)
+            tools.addWidget(self.btn_inst_cfg)
             lay.addLayout(tools)
             self.review = ReviewTable()
             self.review.setMouseTracking(True)
@@ -292,6 +377,8 @@ class GlassWindow(QWidget, chrome.Frame):
             self.review.itemChanged.connect(self._time_edited)
             self.review.setContextMenuPolicy(Qt.CustomContextMenu)
             self.review.customContextMenuRequested.connect(self._review_menu)
+            self.review.itemSelectionChanged.connect(lambda: self.wave.set_selected(self.review.currentRow()))
+            self.review.verticalScrollBar().sliderPressed.connect(self._user_scrolled)
             lay.addWidget(self.review, 1)
 
             exp = QHBoxLayout()
@@ -400,15 +487,64 @@ class GlassWindow(QWidget, chrome.Frame):
             winfx.enable_native_frame(hwnd, dwm_frame=False)
         self.update()
 
+    def resizeEvent(self, e):
+        # lyrics box: compact on short screens (1280×720), roomier on tall ones; the line list gets the rest
+        self.lyrics.setMaximumHeight(max(84, min(200, int(self.height() * 0.13))))
+        super().resizeEvent(e)
+
     def changeEvent(self, e):
-        from PySide6.QtCore import QEvent
         if e.type() == QEvent.WindowStateChange:
-            self._apply_margins()   # no shadow margin while maximized
+            self._apply_margins()   # no shadow margin / rounded corners while maximized or full screen
+            self.btn_max.update()
             self.update()
+            if self.isMaximized() or self.isFullScreen():
+                QTimer.singleShot(0, self._heal_geometry)
+                QTimer.singleShot(250, self._heal_geometry)
         super().changeEvent(e)
 
+    def target_geometry(self):
+        """Where a maximized (work area: the screen minus the taskbar) or full-screen window belongs."""
+        scr = self.screen() or QApplication.primaryScreen()
+        return scr.geometry() if self.isFullScreen() else scr.availableGeometry()
+
+    def _heal_geometry(self):
+        """Maximized/full screen but not covering the target area (a frameless window can end up
+        moved to the corner at its old size): put it there. Logged for the selftest."""
+        if not (self.isMaximized() or self.isFullScreen()):
+            return
+        want = self.target_geometry()
+        got = self.geometry()
+        if abs(got.x() - want.x()) > 2 or abs(got.y() - want.y()) > 2 or abs(got.width() - want.width()) > 2 \
+                or abs(got.height() - want.height()) > 2:
+            self._healed = getattr(self, '_healed', 0) + 1
+            self.setGeometry(want)
+
     def _toggle_max(self):
-        self.showNormal() if self.isMaximized() else self.showMaximized()
+        if self.isFullScreen():
+            self._toggle_full()
+            return
+        if self.isMaximized():
+            self.showNormal()
+            if self._normal_geo is not None and not winfx.IS_WIN:
+                self.setGeometry(self._normal_geo)
+        else:
+            self._normal_geo = self.geometry()
+            self.showMaximized()
+
+    def _toggle_full(self):
+        """F11: full screen and back to how it was (maximized or the previous size)."""
+        if self.isFullScreen():
+            if getattr(self, '_was_max', False):
+                self.showMaximized()
+            else:
+                self.showNormal()
+                if self._normal_geo is not None and not winfx.IS_WIN:
+                    self.setGeometry(self._normal_geo)
+        else:
+            self._was_max = self.isMaximized()
+            if not self._was_max:
+                self._normal_geo = self.geometry()
+            self.showFullScreen()
 
     def _hit(self, pos):
         edge = self.edge_hit(pos.x(), pos.y())
@@ -434,8 +570,10 @@ class GlassWindow(QWidget, chrome.Frame):
             if hit != winfx.HTCLIENT:
                 return True, hit
         elif msg.message == winfx.WM_NCCALCSIZE and msg.wParam:
-            if self.isMaximized():
-                winfx.fix_maximized_rect(msg, int(self.winId()))
+            # IsZoomed, not isMaximized(): Qt only learns about the new state on WM_SIZE, after this
+            # (msg.hWnd, never winId() here: this also runs inside CreateWindowEx, before Qt has the handle)
+            if winfx.is_zoomed(msg.hWnd) and not self.isFullScreen():
+                winfx.fix_maximized_rect(msg, msg.hWnd)
             return True, 0
         elif msg.message == winfx.WM_NCACTIVATE:
             return True, 1
@@ -563,8 +701,14 @@ class GlassWindow(QWidget, chrome.Frame):
         self.lang.setCurrentIndex(max(0, idx))
         self.review.setRowCount(0)
         self.low_lbl.setText('')
+        self._active = -1
+        self.review._active_row = -1
         if song and song.result:
             self._fill_review(song)
+        else:
+            self.wave.set_lines([])
+        self.transport.setVisible(bool(song and song.result))
+        self._load_audio(song)
         self._show_song_dir(song)
         self._loading = False
         self._update_buttons()
@@ -588,9 +732,20 @@ class GlassWindow(QWidget, chrome.Frame):
             play.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             play.setToolTip('Play from this line')
             self.review.setItem(i, 0, play)
+            inst = bool(l.get('inst'))
+            if inst:
+                tip = {'intro': 'Instrumental intro', 'outro': 'Instrumental outro', 'break': 'Instrumental part (solo / break)'}.get(
+                    l.get('kind'), 'Instrumental part (added by hand)') + ' — shown as %s in the lyric files. ' % l['text'] + \
+                    'Delete it with the Delete key or the right-click menu.'
             txt = QTableWidgetItem(('↻ ' if l.get('repeat') else '') + l['text'])
             txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             txt.setToolTip(tip)
+            txt.setData(Qt.UserRole + 1, 'inst' if inst else '')
+            if inst:
+                f = QFont(self.review.font())
+                f.setItalic(True)
+                txt.setFont(f)
+                txt.setForeground(QColor(INST).lighter(125) if self.theme.dark else QColor(INST).darker(135))
             self.review.setItem(i, 1, txt)
             st = QTableWidgetItem(fmt_lrc_time(l['start']))
             st.setTextAlignment(Qt.AlignCenter)
@@ -601,7 +756,9 @@ class GlassWindow(QWidget, chrome.Frame):
             en.setTextAlignment(Qt.AlignCenter)
             en.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.review.setItem(i, 3, en)
-            if is_low:
+            if inst:
+                note = 'music' if l.get('auto') else 'music ✎'
+            elif is_low:
                 note = '● check'
             elif l.get('manual'):
                 note = '✎ fixed'
@@ -611,11 +768,14 @@ class GlassWindow(QWidget, chrome.Frame):
             nt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             nt.setToolTip(tip)
             nt.setData(Qt.UserRole, 'low' if is_low else '')
-            if note and note != '✎ fixed':
+            if inst:
+                nt.setForeground(QColor(INST))
+            elif note and note != '✎ fixed':
                 nt.setForeground(QColor(AMBER))
             self.review.setItem(i, 4, nt)
         self.review.blockSignals(False)
-        self.low_lbl.setText(('<span style="color:%s">●</span> %d line%s to check' % (AMBER, low, '' if low == 1 else 's')) if low else '')
+        self.wave.set_lines(lines, self.review.currentRow())
+        self.low_lbl.setText(('<span style="color:%s">●</span> %d to check' % (AMBER, low)) if low else '')
 
     def _song_selected(self):
         if getattr(self, '_loading', False):
@@ -644,7 +804,9 @@ class GlassWindow(QWidget, chrome.Frame):
         sel = self.selected_songs() if hasattr(self, 'queue') else []
         self.btn_export.setEnabled(not busy and (synced or any(s.result for s in sel)))
         self.btn_setdir.setEnabled(bool(sel))
-        self.btn_resync.setEnabled(synced and not busy and self.review.currentRow() >= 0)
+        row = self.review.currentRow()
+        L = cur.result['lines'] if synced else []
+        self.btn_resync.setEnabled(synced and not busy and 0 <= row < len(L) and not L[row].get('inst'))
         self.btn_cancel.setVisible(busy)
         self.btn_browse.setEnabled(self.save_mode.currentData() == 'folder')
         self.out_dir.setEnabled(self.save_mode.currentData() == 'folder')
@@ -694,9 +856,16 @@ class GlassWindow(QWidget, chrome.Frame):
             return
         self.review.selectRow(row)
         m = QMenu(self)
+        inst = bool(self._lines()[row].get('inst')) if row < len(self._lines()) else False
         m.addAction('▶  Play from this line', lambda: self._play_row(row))
-        a = m.addAction('⟲  Re-sync from this line', lambda: self._resync_row(row))
-        a.setEnabled(not self.app.busy)
+        if not inst:
+            a = m.addAction('⟲  Re-sync from this line', lambda: self._resync_row(row))
+            a.setEnabled(not self.app.busy)
+        m.addSeparator()
+        m.addAction('♪  Insert ♪ here (at the playhead)', self._insert_inst)
+        if inst:
+            m.addAction('Delete this ♪ line', lambda: self._delete_inst(row))
+        m.addAction('♪ settings…', self._inst_settings)
         m.exec(self.review.viewport().mapToGlobal(pos))
 
     def _resync_row(self, row):
@@ -746,44 +915,310 @@ class GlassWindow(QWidget, chrome.Frame):
             self.device_lbl.setStyleSheet('')
 
     # ---------------------------------------------------------------- review editing
-    def _nudge(self, delta):
+    def _lines(self):
         song = self.app.current()
-        row = self.review.currentRow()
-        if not song or not song.result or row < 0:
+        return song.result['lines'] if song and song.result else []
+
+    def _refresh_row(self, row):
+        L = self._lines()
+        if 0 <= row < len(L) and self.review.item(row, 2):
+            self.review.blockSignals(True)
+            self.review.item(row, 2).setText(fmt_lrc_time(L[row]['start']))
+            self.review.item(row, 3).setText(fmt_lrc_time(L[row]['end']))
+            self.review.blockSignals(False)
+        self.wave.set_lines(L, self.review.currentRow())
+
+    def _set_start(self, row, t):
+        """Move line `row` to start at t (nudge, typed time, stamp, waveform drag)."""
+        song = self.app.current()
+        L = self._lines()
+        if not (0 <= row < len(L)):
             return
-        l = song.result['lines'][row]
-        l['start'] = round(max(0.0, l['start'] + delta), 3)
-        if row + 1 < len(song.result['lines']):
-            l['end'] = min(l['end'], song.result['lines'][row + 1]['start'])
+        l = L[row]
+        l['start'] = round(max(0.0, t), 3)
+        if l.get('inst'):
+            l['auto'] = False      # edited by hand: kept when the ♪ lines are recomputed
+        if row + 1 < len(L):
+            l['end'] = min(l['end'], L[row + 1]['start'])
         l['end'] = round(max(l['end'], l['start']), 3)
+        if row > 0 and L[row - 1]['end'] > l['start']:
+            L[row - 1]['end'] = round(max(L[row - 1]['start'], l['start']), 3)
+            self._refresh_row(row - 1)
         song.dirty = True
-        self.review.item(row, 2).setText(fmt_lrc_time(l['start']))
-        self.review.item(row, 3).setText(fmt_lrc_time(l['end']))
+        self._refresh_row(row)
+
+    def _nudge(self, delta):
+        row = self.review.currentRow()
+        L = self._lines()
+        if 0 <= row < len(L):
+            self._set_start(row, L[row]['start'] + delta)
 
     def _time_edited(self, item):
         if item.column() != 2 or getattr(self, '_loading', False):
             return
+        L = self._lines()
+        if not (0 <= item.row() < len(L)):
+            return
+        t = parse_time(item.text())
+        if t is None:
+            self._refresh_row(item.row())
+            return
+        self._set_start(item.row(), t)
+
+    def _retime(self, row, t):
+        self.review.selectRow(row)
+        self._set_start(row, t)
+        self.status_lbl.setText('Line %d now starts at %s' % (row + 1, fmt_lrc_time(t)))
+
+    def stamp(self):
+        """S: the selected line starts at the playhead; select the next line (tap along)."""
+        row = self.review.currentRow()
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return
+        self._set_start(row, self.position())
+        if row + 1 < len(L):
+            self.review.selectRow(row + 1)
+
+    def _insert_inst(self):
         song = self.app.current()
         if not song or not song.result:
             return
-        t = parse_time(item.text())
-        l = song.result['lines'][item.row()]
-        if t is None:
-            item.setText(fmt_lrc_time(l['start']))
-            return
-        l['start'] = t
-        l['end'] = round(max(l['end'], t), 3)
+        t = self.position()
+        if t <= 0.0 and self.review.currentRow() >= 0:
+            t = self._lines()[self.review.currentRow()]['end']
+        row = instrumental.insert(song.result, t, self.app.settings)
         song.dirty = True
-        item.setText(fmt_lrc_time(t))
-        self.review.item(item.row(), 3).setText(fmt_lrc_time(l['end']))
+        self._fill_review(song)
+        self.review.selectRow(row)
+        self.status_lbl.setText('Added a ♪ line at %s' % fmt_lrc_time(t))
+
+    def _delete_inst(self, row=None):
+        song = self.app.current()
+        row = self.review.currentRow() if row is None else row
+        if not song or not song.result or not (0 <= row < len(song.result['lines'])):
+            return False
+        if not instrumental.delete(song.result, row):
+            return False
+        song.dirty = True
+        self._fill_review(song)
+        self.review.selectRow(min(row, self.review.rowCount() - 1))
+        self.status_lbl.setText('♪ line removed')
+        return True
+
+    def _inst_settings(self):
+        from .dialogs import MusicDialog
+        d = MusicDialog(self, self.app.settings)
+        if d.exec():
+            self.app.settings.update(d.values())
+            self.app.save_settings()
+            self.app.apply_instrumental()
+
+    # ---------------------------------------------------------------- playback
+    def _load_audio(self, song):
+        path = song.path if song else ''
+        if self._src and not self._src_is(path):
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._src = ''
+        if not song:
+            self.wave.clear('Select a song to see its waveform')
+            self._update_time()
+            return
+        hit = self.audio.get(path)
+        if hit and os.path.exists(hit[0]):
+            self.wave.set_audio(hit[1], hit[2])
+        else:
+            self.wave.clear('Reading the audio…')
+            self.audio.load(path)
+        self._update_time()
+
+    def _src_is(self, path):
+        hit = self.audio.get(path)
+        return self._src in (path, hit[0] if hit else None)
+
+    def _audio_ready(self, path, wav, peaks, dur):
+        song = self.app.current()
+        if song and song.path == path:
+            if self.wave.peaks is not peaks:
+                self.wave.set_audio(peaks, dur)
+                self.wave.set_lines(self._lines(), self.review.currentRow())
+            if self._src == path and self.player.playbackState() != QMediaPlayer.PlayingState:
+                self._src = ''   # switch to the decoded copy on the next play / seek
+            self._update_time()
+
+    def _audio_failed(self, path, msg):
+        song = self.app.current()
+        if song and song.path == path:
+            self.wave.clear('Waveform not available (%s). Playback uses the original file.' % msg[:80])
+
+    def _ensure_source(self):
+        """Prefer the decoded WAV (sample-accurate seeks); the original file until it's ready."""
+        song = self.app.current()
+        if not song:
+            return False
+        hit = self.audio.get(song.path)
+        want = hit[0] if hit and os.path.exists(hit[0]) else song.path
+        if self._src != want:
+            pos = self.position() if self._src_is(song.path) else None
+            self._src = want
+            self.player.setSource(QUrl.fromLocalFile(want))
+            self.player.setPlaybackRate(self.speed.currentData() or 1.0)
+            if pos:
+                self._pending_seek = pos
+        return True
+
+    def duration(self):
+        return self.wave.duration or (self.player.duration() / 1000.0)
+
+    def position(self):
+        return self.wave.pos
+
+    def _seek(self, t):
+        if not self._ensure_source():
+            return
+        t = max(0.0, min(t, self.duration() or t))
+        st = self.player.mediaStatus()
+        if st in (QMediaPlayer.MediaStatus.LoadingMedia, QMediaPlayer.MediaStatus.NoMedia):
+            self._pending_seek = t
+        else:
+            self.player.setPosition(int(round(t * 1000)))
+        self._pos_anchor = (t, _now())
+        self._show_position(t)
+
+    def _media_status(self, st):
+        if self._pending_seek is not None and st in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia,
+                                                     QMediaPlayer.MediaStatus.BufferingMedia):
+            t, self._pending_seek = self._pending_seek, None
+            self.player.setPosition(int(round(t * 1000)))
+
+    def _skip(self, dt):
+        self._seek(self.position() + dt)
+
+    def toggle_play(self):
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.player.pause()
+            return
+        if not self._ensure_source():
+            return
+        if self._pending_seek is None and self.player.mediaStatus() == QMediaPlayer.MediaStatus.LoadingMedia:
+            self._pending_seek = self.position()
+        elif self._pending_seek is None and abs(self.player.position() / 1000.0 - self.position()) > 0.05:
+            self.player.setPosition(int(round(self.position() * 1000)))
+        self.player.play()
 
     def _play_row(self, row):
-        song = self.app.current()
-        if not song or not song.result or row < 0:
+        L = self._lines()
+        if not (0 <= row < len(L)):
             return
-        self.player.setSource(QUrl.fromLocalFile(song.path))
-        self.player.setPosition(int(song.result['lines'][row]['start'] * 1000))
-        self.player.play()
+        self.review.selectRow(row)
+        self._seek(L[row]['start'])
+        if self.player.playbackState() != QMediaPlayer.PlayingState:
+            self.player.play()
+
+    def _playback_changed(self, state):
+        playing = state == QMediaPlayer.PlayingState
+        self.btn_pp.setText('❚❚' if playing else '▶')
+        if playing:
+            self._pos_anchor = (self.player.position() / 1000.0, _now())
+            self._tick.start()
+        else:
+            self._tick.stop()
+            if state == QMediaPlayer.StoppedState and self.player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia:
+                self._show_position(self.duration())
+            else:
+                self._show_position(self.player.position() / 1000.0)
+
+    def _position_changed(self, ms):
+        self._pos_anchor = (ms / 1000.0, _now())
+        if self.player.playbackState() != QMediaPlayer.PlayingState and self._pending_seek is None:
+            self._show_position(ms / 1000.0)
+
+    def _update_playhead(self):
+        """33 ms while playing: interpolate between the player's position reports."""
+        p0, t0 = self._pos_anchor
+        rate = self.speed.currentData() or 1.0
+        t = p0 + min(0.25, (_now() - t0)) * rate
+        self._show_position(t, playing=True)
+
+    def _show_position(self, t, playing=False):
+        self.wave.set_position(t, playing)
+        self._update_time(t)
+        self._set_active(t, playing)
+
+    def _update_time(self, t=None):
+        t = self.position() if t is None else t
+        self.time_lbl.setText('%s / %s' % (fmt_clock(t), fmt_clock(self.duration())))
+
+    def _set_active(self, t, follow):
+        L = self._lines()
+        row = -1
+        for i, l in enumerate(L):
+            if l['start'] <= t + 0.005:
+                if row < 0 or l['start'] >= L[row]['start']:
+                    row = i
+        if row >= 0 and t > L[row].get('end', t) + 1.0 and not L[row].get('inst'):
+            row = -1 if not any(l['start'] > t for l in L) else row
+        if row == self._active:
+            return
+        old, self._active = self._active, row
+        self.review._active_row = row
+        vp = self.review.viewport()
+        for r in (old, row):
+            if r >= 0:
+                rect = self.review.visualRect(self.review.model().index(r, 0))
+                vp.update(0, rect.top(), vp.width(), rect.height())
+        if follow and row >= 0 and _now() - getattr(self, '_scrolled_at', 0) > 3.0 \
+                and self.review.state() != QAbstractItemView.State.EditingState:
+            self.review.scrollTo(self.review.model().index(row, 1), QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def _user_scrolled(self):
+        self._scrolled_at = _now()
+
+    # ---------------------------------------------------------------- keyboard
+    def _typing(self):
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QPlainTextEdit, QTextEdit, QAbstractSpinBox)):
+            return True
+        return self.review.state() == QAbstractItemView.State.EditingState
+
+    def eventFilter(self, obj, e):
+        if e.type() != QEvent.KeyPress or QApplication.activeWindow() is not self or QApplication.activeModalWidget() \
+                or QApplication.activePopupWidget() or self._typing() or e.isAutoRepeat() and e.key() == Qt.Key_Space:
+            return False
+        if not isinstance(obj, QWidget) or obj.window() is not self:
+            return False
+        return self.handle_key(e.key(), e.modifiers())
+
+    def handle_key(self, k, mods=Qt.NoModifier):
+        """Player/review shortcuts (not while typing). True when the key was used."""
+        if mods & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            return False
+        in_queue = QApplication.focusWidget() is self.queue
+        has = bool(self._lines())
+        if k == Qt.Key_Space and self.app.current():
+            self.toggle_play()
+            return True
+        if k in (Qt.Key_Up, Qt.Key_Down) and has and not in_queue:
+            r = self.review.currentRow()
+            n = self.review.rowCount()
+            r = (0 if r < 0 else max(0, r - 1)) if k == Qt.Key_Up else (0 if r < 0 else min(n - 1, r + 1))
+            self.review.selectRow(r)
+            self.review.scrollTo(self.review.model().index(r, 1))
+            return True
+        if k in (Qt.Key_Left, Qt.Key_Right) and has and self.review.currentRow() >= 0:
+            step = 0.01 if mods & Qt.ShiftModifier else 0.1
+            self._nudge(step if k == Qt.Key_Right else -step)
+            return True
+        if k == Qt.Key_S and has and self.review.currentRow() >= 0:
+            self.stamp()
+            return True
+        if k == Qt.Key_Delete and has and not in_queue:
+            return self._delete_inst()
+        if k == Qt.Key_Escape and self.isFullScreen():
+            self._toggle_full()
+            return True
+        return False
 
     # ---------------------------------------------------------------- export UI
     def _browse_out(self):
@@ -862,4 +1297,6 @@ class GlassWindow(QWidget, chrome.Frame):
                 return
             self.app.cancel()
         self.player.stop()
+        self.audio.cancel()
+        QApplication.instance().removeEventFilter(self)
         super().closeEvent(e)

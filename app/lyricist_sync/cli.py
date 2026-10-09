@@ -31,12 +31,16 @@ def main(argv=None):
     ap.add_argument('--version', action='store_true')
     ap.add_argument('--selftest', action='store_true', help='check GUI, exporters and packaging without models')
     ap.add_argument('--screens', metavar='DIR', help='render screenshots of the main window')
+    ap.add_argument('--screens-maximized', metavar='DIR', help='render the maximized window on 1280×720, 1920×1080 and '
+                    '2560×1440 offscreen screens')
     ap.add_argument('--fixture', metavar='DIR', help='folder with demo_*.mp3/.txt/.result.json for --screens')
     ap.add_argument('--setup', action='store_true', help='download and install the engine without the GUI')
     ap.add_argument('--variant', choices=['auto', 'cuda', 'cpu'], default='auto')
     ap.add_argument('--sync', metavar='AUDIO', nargs='+', help='sync audio files without the GUI')
     ap.add_argument('--lyrics', metavar='TXT', help='lyrics file (default: same name .txt next to the audio)')
     ap.add_argument('--lang', default='auto')
+    ap.add_argument('--no-music-lines', action='store_true', help='don\'t add ♪ lines in instrumental parts')
+    ap.add_argument('--music-gap', type=float, default=8.0, help='shortest instrumental gap that gets a ♪ line (3-30 s)')
     ap.add_argument('--out', metavar='DIR', help='output folder (default: next to the audio)')
     ap.add_argument('--formats', default='ttml,lrc,srt,vtt')
     ap.add_argument('--bom', action='store_true', help='UTF-8 BOM in .srt')
@@ -63,7 +67,7 @@ def main(argv=None):
         _console()
         from .setup_test import run_update_test
         return _hard_exit(run_update_test(a.update_test, a.install, a.report))
-    headless = a.version or a.selftest or a.screens or a.setup or a.sync
+    headless = a.version or a.selftest or a.screens or a.setup or a.sync or a.screens_maximized
     if not headless:
         from .app import run_gui
         return run_gui([argv[0]] + a.files)
@@ -78,6 +82,9 @@ def main(argv=None):
     if a.screens:
         from .screens import render
         return _hard_exit(render(a.screens, a.fixture))
+    if a.screens_maximized:
+        from .screens import render_maximized
+        return _hard_exit(render_maximized(a.screens_maximized, a.fixture))
     if a.setup:
         return cli_setup(a.variant)
     if a.sync:
@@ -164,12 +171,16 @@ def cli_sync(a):
             rc = 1
             continue
         s = S()
+        if not a.no_music_lines:
+            from . import instrumental
+            instrumental.apply(res, {'inst_gap': a.music_gap})
         s.path, s.tags, s.result, s.iso = audio, read_tags(audio), res, iso
         if not iso and res.get('language'):
             s.iso = {'en': 'eng', 'el': 'ell'}.get(res['language'], '')
         out = a.out or os.path.dirname(os.path.abspath(audio))
         files = export_song(s, {'dir': out, 'formats': a.formats.split(','), 'bom': a.bom})
-        print('%s: %d lines, %d repeats, %.1f s on %s → %s' % (os.path.basename(audio), len(res['lines']), len(res['repeats']),
+        print('%s: %d lines (+%d music), %d repeats, %.1f s on %s → %s' % (
+            os.path.basename(audio), sum(1 for l in res['lines'] if not l.get('inst')), sum(1 for l in res['lines'] if l.get('inst')), len(res['repeats']),
                                                                res['timings']['total'], res['device'], ', '.join(files)), flush=True)
         report.append({'audio': audio, 'files': files, 'result': res})
     try:

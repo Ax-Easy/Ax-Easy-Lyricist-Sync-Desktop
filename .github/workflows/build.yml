@@ -39,6 +39,7 @@ jobs:
           python tests/test_formats.py -v
           python tests/test_repeats.py -v
           python tests/test_bootstrap.py -v
+          python tests/test_instrumental.py -v
 
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
@@ -46,12 +47,27 @@ jobs:
       - name: PyInstaller
         run: pyinstaller LyricistSync.spec --noconfirm --clean
 
-      - name: Self-test the frozen app (GUI, footer, exporters, save modes, conflicts, re-sync, updater, frame)
+      - name: Screen resolution 1920x1080 (so the maximize test can see the panels grow; best effort)
+        shell: pwsh
+        run: |
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop; "resolution set" } catch { "Set-DisplayResolution not available: $_" }
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::AllScreens | Format-List DeviceName, Bounds, WorkingArea
+
+      - name: Self-test the frozen app (GUI, footer, exporters, save modes, conflicts, re-sync, updater, frame, ♪ lines, player, maximize)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--selftest','--report','selftest.json' -Wait -PassThru -NoNewWindow
           Get-Content selftest.json
           if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
+
+      - name: If the self-test failed, run it from source with a console (Python traceback / faulthandler)
+        if: failure()
+        shell: pwsh
+        working-directory: app
+        run: |
+          python -X faulthandler -m lyricist_sync --selftest --report ..\selftest-src.json
+          Get-Content ..\selftest-src.json -ErrorAction SilentlyContinue
 
       - name: Self-test with --force-win10-style (painted glass + shadow margin, hit-tests on the visible edge)
         shell: pwsh
@@ -66,6 +82,13 @@ jobs:
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--screens','screens-ci','--fixture','tests\fixtures' -Wait -PassThru -NoNewWindow
           Get-ChildItem screens-ci
           if ($p.ExitCode -ne 0) { throw "screens failed: $($p.ExitCode)" }
+
+      - name: Maximized screenshots (offscreen 1280x720, 1920x1080, 2560x1440; dark and light)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--screens-maximized','screens-ci\max','--fixture','tests\fixtures' -Wait -PassThru -NoNewWindow
+          Get-Content screens-ci\max\maximized.json
+          if ($p.ExitCode -ne 0) { throw "maximized screens failed: $($p.ExitCode)" }
 
       - name: Inno Setup
         shell: pwsh
@@ -147,7 +170,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
-          path: screens-ci/*.png
+          path: |
+            screens-ci/*.png
+            screens-ci/max/*
       - uses: actions/upload-artifact@v4
         if: always()
         with:

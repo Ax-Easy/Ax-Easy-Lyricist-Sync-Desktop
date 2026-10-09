@@ -10,7 +10,7 @@ import uuid
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from . import bootstrap, paths, theme as thememod, updater
+from . import bootstrap, instrumental, paths, theme as thememod, updater
 from .engine_client import EngineClient
 from .export import export_song, read_tags, target_dir
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
@@ -63,6 +63,7 @@ class App:
                          'save_mode': 'beside', 'song_dirs': {},
                          'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False,
                          'update_check': True, 'update_last': 0, 'update_skip': ''}
+        self.settings.update(instrumental.DEFAULTS)
         self.update_state = None
         self._upd = _UpdSignal()
         self._upd.checked.connect(self._quiet_checked)
@@ -113,6 +114,15 @@ class App:
             self.cur = 0
         self.win.refresh_queue(self.songs, self.cur)
         self.win.show_song(self.current())
+
+    def apply_instrumental(self, songs=None):
+        """Re-place the ♪ lines of synced songs after the ♪ settings changed."""
+        for s in songs or self.songs:
+            if s.result:
+                instrumental.apply(s.result, self.settings)
+                s.dirty = True
+        if self.current() and self.current().result:
+            self.win.show_song(self.current())
 
     def remove_song(self, i):
         if self.busy or not (0 <= i < len(self.songs)):
@@ -210,13 +220,18 @@ class App:
         self.win.set_busy(True, '%s · %s' % (s.label(), s.status), pct)
 
     def resync(self, s, row):
-        """Keep line `row` at its current start and re-align only the lines after it."""
+        """Keep line `row` at its current start and re-align only the sung lines after it
+        (♪ lines are never aligned; they are recomputed afterwards)."""
         if self.busy or not s.result or not self.ensure_engine():
             return
         lines = s.result['lines']
-        job = {'cmd': 'resync', 'id': s.id, 'audio': s.path, 'lines': [l['text'] for l in lines],
-               'idx': [l.get('idx', k) for k, l in enumerate(lines)], 'from': row, 'anchor': lines[row]['start'],
-               'starts': [l['start'] for l in lines], 'ends': [l['end'] for l in lines], 'iso': s.iso,
+        if not (0 <= row < len(lines)) or lines[row].get('inst'):
+            return
+        sung = instrumental.sung(lines)
+        k = sung.index(lines[row])
+        job = {'cmd': 'resync', 'id': s.id, 'audio': s.path, 'lines': [l['text'] for l in sung],
+               'idx': [l.get('idx', i) for i, l in enumerate(sung)], 'from': k, 'anchor': sung[k]['start'],
+               'starts': [l['start'] for l in sung], 'ends': [l.get('end0', l['end']) for l in sung], 'iso': s.iso,
                'lang': resolve_lang(s.lang, split_lines(s.lyrics))[0]}
         self.busy = True
         self.queue = [s]
@@ -232,24 +247,31 @@ class App:
         s = self._find(sid)
         if s and 'from' in res and s.result:
             k0 = res['from']
-            keep = s.result['lines'][:k0]
+            sung = instrumental.sung(s.result['lines'])
+            manual = [l for l in s.result['lines'] if l.get('inst') and not l.get('auto')]
+            keep = sung[:k0]
             new = res['lines']
             if new:
                 new[0]['manual'] = True
                 new[0]['conf'], new[0]['why'] = 1.0, ['set by hand']
-            s.result['lines'] = keep + new
+            s.result['lines'] = keep + new + manual
+            if res.get('vocals') is not None:
+                s.result['vocals'] = res['vocals']
+            instrumental.apply(s.result, self.settings)
             s.dirty = True
             low = sum(1 for l in s.result['lines'] if (l.get('conf') if l.get('conf') is not None else 1) < 0.6)
             s.status = 'Synced' + (' · %d to check' % low if low else '')
             self._set_row(s)
             if s is self.current():
                 self.win.show_song(s)
-                self.win.review.selectRow(k0)
+                sel = new[0] if new else (keep[-1] if keep else None)
+                self.win.review.selectRow(next((i for i, l in enumerate(s.result['lines']) if l is sel), 0))
             self.win.status_lbl.setText('Re-synced %d lines after line %d.' % (max(0, len(new) - 1), k0 + 1))
             self._pop(sid)
             return
         if s:
             s.result = res
+            instrumental.apply(res, self.settings)
             reps = len(res.get('repeats') or [])
             low = res.get('low_conf') or 0
             s.status = 'Synced' + (' · %d repeat%s' % (reps, 's' if reps > 1 else '') if reps else '') + \
