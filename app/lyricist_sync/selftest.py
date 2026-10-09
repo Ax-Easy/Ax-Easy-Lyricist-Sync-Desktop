@@ -692,7 +692,10 @@ def run(report_path=None):
         assert L()[2]['end'] == 9.0
         assert abs(win.wave.lines[2]['start'] - 6.75) < 1e-9      # the waveform marker moved too
         # Edit Line dialog: Greek words, times, Enter saves / Esc cancels
-        from PySide6.QtTest import QTest
+        def key_click(w, k):   # (QtTest is not in the frozen app)
+            QApplication.sendEvent(w, QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier))
+            QApplication.sendEvent(w, QKeyEvent(QEvent.KeyRelease, k, Qt.NoModifier))
+            qapp.processEvents()
         d = win.edit_line_dialog(1, exec_=False)
         assert d is not None, (app.busy, len(L()), win.review.currentRow())
         d._selftest_keep = True
@@ -708,7 +711,7 @@ def run(report_path=None):
         assert d.realign.isChecked()          # half of the words changed: Re-align is ticked
         d.realign.setChecked(False)
         d.show()
-        QTest.keyClick(d.fields['end'], Qt.Key_Return)
+        key_click(d.fields['end'], Qt.Key_Return)
         assert d.result() == 1
         win.apply_line_dialog(1, d)
         assert (L()[1]['text'], L()[1]['start'], L()[1]['end']) == ('Ο ήλιος βγαίνει ξανά', 3.59, 6.4), L()[1]
@@ -716,7 +719,7 @@ def run(report_path=None):
         d._selftest_keep = True
         d.text.setText('nothing')
         d.show()
-        QTest.keyClick(d.text, Qt.Key_Escape)
+        key_click(d.text, Qt.Key_Escape)
         assert d.result() == 0 and L()[1]['text'] == 'Ο ήλιος βγαίνει ξανά'
         d.close()
         # big word change ticks "Re-align"
