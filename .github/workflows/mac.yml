@@ -186,6 +186,15 @@ jobs:
           xcrun stapler validate "dist/Lyricist Sync.app"
           spctl -a -vvv -t exec "dist/Lyricist Sync.app" 2>&1 | tee notary/spctl-app.txt
 
+      - name: HTTPS works without python.org's certificate folder (as on a user's Mac)
+        run: |
+          set -euo pipefail
+          sudo mv /Library/Frameworks/Python.framework/Versions/3.12/etc/openssl /tmp/pyorg-openssl.bak 2>/dev/null || true
+          rc=0
+          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --https-check https://pypi.org/simple/ || rc=$?
+          sudo mv /tmp/pyorg-openssl.bak /Library/Frameworks/Python.framework/Versions/3.12/etc/openssl 2>/dev/null || true
+          exit $rc
+
       - name: Self-test the signed app (arm64 slice, hardened runtime)
         run: |
           rc=0

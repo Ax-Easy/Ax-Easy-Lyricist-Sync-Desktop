@@ -54,6 +54,8 @@ app = BUNDLE(
         'LSMinimumSystemVersionByArchitecture': {'arm64': '11.0', 'x86_64': '12.0'},
         'LSArchitecturePriority': ['arm64', 'x86_64'],
         'NSHighResolutionCapable': True,
+        # the frozen python.org OpenSSL has no CA bundle of its own on users' Macs (cli._mac_ca_bundle too)
+        'LSEnvironment': {'SSL_CERT_FILE': '/etc/ssl/cert.pem'},
         'NSRequiresAquaSystemAppearance': False,
         'NSSupportsAutomaticGraphicsSwitching': True,
         'CFBundleDocumentTypes': [{
