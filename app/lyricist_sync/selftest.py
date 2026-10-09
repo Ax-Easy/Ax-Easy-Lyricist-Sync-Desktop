@@ -626,6 +626,11 @@ def run(report_path=None):
         if mac:   # leaving the full-screen space animates; slow on the Intel CI VMs
             pump(12.0, lambda: not win.isFullScreen() and not win.isMaximized())
             pump(1.5)
+            if win.isFullScreen() or win.isMaximized():   # Intel CI VMs sometimes drop the exit animation; record and ask once more
+                out['fullscreen_exit_retry'] = [win.isFullScreen(), win.isMaximized(), win.geometry().getRect()]
+                win.showNormal()
+                pump(12.0, lambda: not win.isFullScreen() and not win.isMaximized())
+                pump(1.5)
         out['after_fullscreen'] = win.geometry().getRect()
         assert not win.isFullScreen() and not win.isMaximized()
         out['healed'] = getattr(win, '_healed', 0)
