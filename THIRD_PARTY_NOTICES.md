@@ -22,6 +22,8 @@ There are two groups:
 | tinytag (audio tag reading) | 2.3.2 | MIT | https://github.com/tinytag/tinytag |
 | openai-whisper (wheel shipped for the offline install) | 20250625 | MIT | https://github.com/openai/whisper |
 
+mutagen (GPL-2.0-or-later) was used for tag reading before 1.3.1. It is no longer used or bundled; tinytag replaced it.
+
 ### Qt / PySide6 (LGPL-3.0) – your rights
 
 The official binaries use Qt and PySide6 **unmodified** and **dynamically linked**, as separate shared libraries, as the

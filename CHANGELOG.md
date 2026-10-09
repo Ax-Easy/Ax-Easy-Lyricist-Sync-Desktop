@@ -52,7 +52,8 @@
   replaced in place, or the DMG opens for a manual drag when that isn't possible.
 
 ### Other
-- Audio tags are read with tinytag (MIT) instead of mutagen.
+- Audio tags are read with tinytag (MIT) instead of mutagen (GPL); the builds exclude mutagen and the self-test checks it.
+- Tests and fixtures use made-up lyrics only.
 - LICENSE (all rights reserved, source visible) and THIRD_PARTY_NOTICES.md, also shipped inside the app.
 
 ## 1.3.0 (2026-10-09)

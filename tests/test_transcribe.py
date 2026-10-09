@@ -1,5 +1,5 @@
 """Transcribe mode without Whisper: hallucination filters, line building, confidence, WER and the
-evaluation used for the Stoned / demo numbers. Pure Python (the e2e job runs the real model)."""
+evaluation used for the real-song / demo numbers. Pure Python (the e2e job runs the real model)."""
 import os, sys, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'engine'))
@@ -30,14 +30,14 @@ class TestFilters(unittest.TestCase):
         for t in ('Thank you for watching!', 'Subtitles by the Amara.org community', 'Υπότιτλοι AUTHORWAVE',
                   '♪♪', '...', 'Hmmmmm Mmmmmm', 'mm hmm', '[Music]', 'I...', ' I... I...', 'Ah…'):
             self.assertTrue(TR.is_filler(t), t)
-        for t in ('Thank you, my love', 'Remember us as a system failure', 'Καλησπέρα κόσμε', 'Oh oh oh', 'La la la', 'I... I love you', 'I know'):
+        for t in ('Thank you, my love', 'Think of us as a passing season', 'Καλησπέρα κόσμε', 'Oh oh oh', 'La la la', 'I... I love you', 'I know'):
             self.assertFalse(TR.is_filler(t), t)
 
     def test_drop_in_silence_and_no_speech(self):
-        segs = [seg(10, 'we broke the code'), seg(40, 'thank you'), seg(60, 'something here', no_speech_prob=0.9, avg_logprob=-1.2),
+        segs = [seg(10, 'we found the key'), seg(40, 'thank you'), seg(60, 'something here', no_speech_prob=0.9, avg_logprob=-1.2),
                 seg(70, 'la la la la la la', compression_ratio=3.1), seg(80, 'still here')]
         kept, dropped = TR.filter_segments(segs, [(9.5, 12.0), (59.0, 62.0), (69.0, 82.0)])
-        self.assertEqual([s['text'].strip() for s in kept], ['we broke the code', 'still here'])
+        self.assertEqual([s['text'].strip() for s in kept], ['we found the key', 'still here'])
         reasons = [r for _s, r in dropped]
         self.assertIn('no vocals under it', reasons)
         self.assertTrue(any(r.startswith('no speech') for r in reasons))
@@ -45,9 +45,9 @@ class TestFilters(unittest.TestCase):
 
     def test_gibberish_dropped(self):
         segs = [seg(0.0, 'gym?', avg_logprob=-3.1), seg(22.0, 'can? you? hear? me?', avg_logprob=-0.9),
-                seg(27.0, 'remember us as a system failure', avg_logprob=-0.4)]
+                seg(27.0, 'think of us as a passing season', avg_logprob=-0.4)]
         kept, dropped = TR.filter_segments(segs, VOC)
-        self.assertEqual([s['text'].strip() for s in kept], ['remember us as a system failure'])
+        self.assertEqual([s['text'].strip() for s in kept], ['think of us as a passing season'])
         self.assertTrue(all(r.startswith('gibberish') for _s, r in dropped))
 
     def test_loop_dropped_chorus_kept(self):
@@ -61,23 +61,23 @@ class TestFilters(unittest.TestCase):
 
 class TestLines(unittest.TestCase):
     def test_segments_and_pauses(self):
-        segs = [seg(1.0, 'remember us as a system failure'), seg(4.0, 'signal loss in a dying layer'),
-                seg(8.0, 'we broke the code'), seg(9.6, 'corrupt and heavy')]   # pause 0.3 s, no punctuation
+        segs = [seg(1.0, 'think of us as a passing season'), seg(4.0, 'paper lanterns on a quiet river'),
+                seg(8.0, 'we found the key'), seg(9.6, 'bright and steady')]   # pause 0.3 s, no punctuation
         lines = TR.build_lines(segs, VOC)
-        self.assertEqual([l['text'] for l in lines][:2], ['Remember us as a system failure', 'Signal loss in a dying layer'])
+        self.assertEqual([l['text'] for l in lines][:2], ['Think of us as a passing season', 'Paper lanterns on a quiet river'])
         self.assertAlmostEqual(lines[0]['start'], 1.0)
         self.assertAlmostEqual(lines[1]['start'], 4.0)
         for l in lines:
             self.assertLessEqual(len(l['text']), TR.MAX_CHARS + 8)
 
     def test_long_segment_split_at_pause(self):
-        s = seg(0.0, 'we traced the logs for someone to blame')
-        tail = seg(s['end'] + 0.9, 'but in the backend just dead concrete')
+        s = seg(0.0, 'we combed the sand for shells to bring')
+        tail = seg(s['end'] + 0.9, 'but in the valley only old snow')
         s['words'] += tail['words']
         s['text'] += tail['text']
         s['end'] = tail['end']
         lines = TR.build_lines([s], VOC)
-        self.assertEqual([l['text'] for l in lines], ['We traced the logs for someone to blame', 'But in the backend just dead concrete'])
+        self.assertEqual([l['text'] for l in lines], ['We combed the sand for shells to bring', 'But in the valley only old snow'])
         self.assertAlmostEqual(lines[1]['start'], tail['start'], places=2)
 
     def test_max_chars(self):
@@ -89,10 +89,10 @@ class TestLines(unittest.TestCase):
             self.assertGreaterEqual(len(l['text'].split()), 2)
 
     def test_first_word_of_next_line_moves(self):
-        """Whisper ended a segment with the first word of the next line: '…the sound You | killed your…'."""
-        segs = [seg(0.0, 'No spark left to power the sound You'), seg(3.0, 'killed your drive with feedback cries')]
+        """Whisper ended a segment with the first word of the next line: '…the ships You | turned your…'."""
+        segs = [seg(0.0, 'No light left to guide the ships You'), seg(3.0, 'turned your sails into evening breeze')]
         texts = [l['text'] for l in TR.build_lines(segs, VOC)]
-        self.assertEqual(texts, ['No spark left to power the sound', 'You killed your drive with feedback cries'])
+        self.assertEqual(texts, ['No light left to guide the ships', 'You turned your sails into evening breeze'])
 
     def test_confidence_and_amber_words(self):
         segs = [seg(0.0, 'clear words here now'), seg(3.0, 'mumbled? words? here maybe?')]
@@ -108,10 +108,10 @@ class TestLines(unittest.TestCase):
                 self.assertLessEqual(w[1], w[2])
 
     def test_word_pieces_joined(self):
-        s = seg(0.0, 'projected streams on steel')
-        s['words'].append({'word': '-cold', 'start': 1.5, 'end': 1.8, 'probability': 0.9})
-        s['words'].append({'word': ' mountains', 'start': 1.8, 'end': 2.3, 'probability': 0.9})
-        self.assertEqual(TR.build_lines([s], VOC)[0]['text'], 'Projected streams on steel-cold mountains')
+        s = seg(0.0, 'painted kites on snow')
+        s['words'].append({'word': '-white', 'start': 1.5, 'end': 1.8, 'probability': 0.9})
+        s['words'].append({'word': ' meadows', 'start': 1.8, 'end': 2.3, 'probability': 0.9})
+        self.assertEqual(TR.build_lines([s], VOC)[0]['text'], 'Painted kites on snow-white meadows')
 
     def test_greek(self):
         segs = [seg(4.0, 'Καλησπέρα κόσμε'), seg(6.3, 'Ο ήλιος ανατέλλει πάλι')]
@@ -130,13 +130,13 @@ class TestScoring(unittest.TestCase):
     def test_wer(self):
         self.assertEqual(TR.wer('a b c d', 'a b c d')[0], 0.0)
         self.assertAlmostEqual(TR.wer('a b c d', 'a x c')[0], 0.5)          # 1 sub + 1 del
-        self.assertEqual(TR.wer("You hit escape and I’m still free.", "you hit escape and i'm still free")[0], 0.0)
+        self.assertEqual(TR.wer("You closed the door and I’m still here.", "you closed the door and i'm still here")[0], 0.0)
         self.assertEqual(TR.wer('Σ’ αγαπώ σαν τρελός', 'σ αγαπω σαν τρελος')[0], 0.0)
 
     def test_eval(self):
         import eval_transcribe as ev
-        truth = [{'text': 'We broke the code', 'start': 10.0}, {'text': 'We pulled the plug', 'start': 13.0}]
-        res = {'lines': [l for l in TR.build_lines([seg(10.1, 'we broke the code'), seg(12.8, 'we pulled the plug')], VOC)]}
+        truth = [{'text': 'We found the key', 'start': 10.0}, {'text': 'We locked the door', 'start': 13.0}]
+        res = {'lines': [l for l in TR.build_lines([seg(10.1, 'we found the key'), seg(12.8, 'we locked the door')], VOC)]}
         r = ev.evaluate(res, truth)
         self.assertEqual(r['wer'], 0.0)
         self.assertEqual(r['start_found'], 2)
