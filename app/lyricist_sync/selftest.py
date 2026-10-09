@@ -634,6 +634,9 @@ def run(report_path=None):
 
     def tiers():
         out = {}
+        md = bootstrap.ModelDownload('medium')   # Engine settings download plan for this platform's PyTorch variant
+        assert [i['kind'] for i in md.setup.items] == ['model'], md.setup.items
+        out['model_download_variant'] = md.setup.variant
         for gb, want in ((None, 'small'), (4.0, 'small'), (8.0, 'medium'), (12.0, 'large-v3-turbo'), (16.0, 'large-v3-turbo'),
                          (23.7, 'large-v3'), (24.0, 'large-v3')):
             got = bootstrap.whisper_tier(gb, 'cuda')
