@@ -60,6 +60,13 @@ def main(argv=None):
     ap.add_argument('--edit-test', metavar='AUDIO', help='CI: sync AUDIO (--lyrics), edit a line like the review list does, '
                     're-align that line with the engine, export, and write a --report')
     a = ap.parse_args(argv[1:])
+    if os.environ.get('LYRICIST_SYNC_FAULTHANDLER'):   # CI: SIGUSR1 / a crash dumps every thread's Python stack here
+        import faulthandler
+        _fh = open(os.environ['LYRICIST_SYNC_FAULTHANDLER'], 'w')
+        faulthandler.enable(_fh, all_threads=True)
+        if hasattr(faulthandler, 'register'):
+            import signal
+            faulthandler.register(signal.SIGUSR1, _fh, all_threads=True)
     if a.force_win10_style:
         os.environ['LYRICIST_SYNC_FORCE_WIN10'] = '1'
         from . import chrome
