@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.3.1 (2026-10-09)
+
+### Edit lines in the review list
+- **Right-click a line → Edit Line…** (or **Enter**): the line text (any language, Greek included), **Start** and
+  **End** as `mm:ss.xxx` with **−0.1 / −0.01 / +0.01 / +0.1**, **▶ Play line** (plays Start to End), **Split at
+  cursor**, **Re-align this line after saving**, and **Cancel / Save**. Enter saves, Esc cancels.
+- **In place**: double-click the words or press **F2**; double-click a start or end time to type it. Enter saves,
+  Esc cancels. Right-click in the editor → **Split line at cursor**.
+- **Right-click menu**: Edit Line…, Play from line, Re-sync from here, Re-align this line, Split line at cursor,
+  Merge with next, Insert line above / below, Insert ♪ here, Mark as ♪ / Unmark ♪, ♪ settings…, Undo, Redo,
+  Delete line.
+- Everything stays in step: the lyrics box (section tags like `[Chorus]` and blank lines are kept), the waveform
+  markers and the exported TTML / LRC / SRT / VTT.
+  - Editing the words keeps the times; the amber **● check** and the amber words of that line go away
+    (**✎ edited**). Changing a repeated line (`↻`) changes every repeat of it.
+  - **Split** divides the time in proportion to the characters (or at the playhead when it is inside the line);
+    **Merge with next** keeps the first start and the last end.
+  - **Re-align this line** runs the aligner for that one line between its neighbours, after big word changes.
+    The Edit Line dialog ticks it for you when 40 % or more of the words changed.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y, and **↶ ↷** next to Re-sync) for every change in the line list, kept per song.
+- **Transcribe** or **Auto-sync** over lines you edited asks first: **Keep my edits** / **Replace**.
+
+### Export confirmation
+- After **Export** a confirmation stays open until you close it: *N files saved for M songs*, and per song the
+  full folder and the files. Skipped songs are amber and failed ones red, with the reason. Several songs: the list
+  folds behind **Show files ▾**. Buttons **Open folder** and **OK**.
+
+### Unsaved lyrics
+- Songs synced, transcribed or edited since their last export are marked **●** in the song list.
+- Closing the window (✕, Alt+F4, or the restart of an in-app update) asks **You have unsaved lyrics for N songs**:
+  **Export all & close** (each song to its own save location; closes only if all were saved), **Close without
+  saving**, **Cancel**. Removing an unsaved song from the list asks too.
+
+### Measured
+- Re-align one line (CI e2e on the English demo, Windows CPU): a line moved 1.5 s off comes back to its Auto-sync
+  start; the cached song analysis makes it take well under a second.
+- *Stoned* (Transcribe with large-v3, 25 lines): each line moved 1.0 s late and re-aligned between its neighbours
+  came back to its aligned start in all 25 cases (0.00 s off), in 0.03 s per line (median, CPU, cached analysis).
+
 ## 1.3.0 (2026-10-09)
 
 ### Transcribe: no lyrics needed
