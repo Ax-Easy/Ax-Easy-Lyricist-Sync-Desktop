@@ -67,14 +67,13 @@ def export_song(song, options, on_conflict=None):
 
 def read_tags(path):
     tags = {}
-    try:
-        from mutagen import File
-        f = File(path, easy=True)
-        if f and f.tags:
-            for k in ('title', 'artist', 'album'):
-                v = f.tags.get(k)
-                if v:
-                    tags[k] = str(v[0])
+    try:  # tinytag (MIT): MP3/ID3, MP4/M4A, FLAC, Ogg, WAV, AIFF tags (replaced mutagen, GPL, in 1.3.1)
+        from tinytag import TinyTag
+        t = TinyTag.get(path)
+        for k in ('title', 'artist', 'album'):
+            v = getattr(t, k, None)
+            if v:
+                tags[k] = str(v)
     except Exception:
         pass
     return tags
