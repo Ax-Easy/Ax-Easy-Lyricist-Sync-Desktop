@@ -5,8 +5,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'app'))
 from lyricist_sync import formats as F  # noqa: E402
 
-TEXTS = ['Remember us as a system failure?', 'Καλησπέρα κόσμε', 'Ο ήλιος ανατέλλει 🌅', 'Tom & Jerry <live> "x" \'y\'',
-         'שלום עולם', 'Signal loss in a dying layer.', 'Σ’ αγαπώ', '   padded   ', '', 'bad\u0001char']
+TEXTS = ['Think of us as a passing season?', 'Καλησπέρα κόσμε', 'Ο ήλιος ανατέλλει 🌅', 'Tom & Jerry <live> "x" \'y\'',
+         'שלום עולם', 'Paper lanterns on a quiet river.', 'Σ’ αγαπώ', '   padded   ', '', 'bad\u0001char']
 
 
 def cases():
@@ -20,11 +20,11 @@ def cases():
             if rnd.random() < 0.15:
                 l['time'] = None
             lines.append(l)
-        meta = {'ti': rnd.choice(['Stoned', 'Ήλιος', '', 'A]b\nc']), 'ar': rnd.choice(['Monitored', '', 'Μόνιτορ']),
-                'al': rnd.choice(['Reflections', '']), 'lang': rnd.choice(['', 'eng', 'ell', 'deu', 'xx'])}
-        info = {'filename': rnd.choice(['01 stoned.mp3', 'Τραγούδι.flac', 'con.wav', '']),
-                'title': rnd.choice(['', 'Stoned', 'Monitored - Stoned', 'Ήλιος: "Νέο"?']),
-                'artist': rnd.choice(['', 'Monitored', 'Μόνιτορ'])}
+        meta = {'ti': rnd.choice(['Paper Kites', 'Ήλιος', '', 'A]b\nc']), 'ar': rnd.choice(['The Example Band', '', 'Χαρταετοί']),
+                'al': rnd.choice(['Demos', '']), 'lang': rnd.choice(['', 'eng', 'ell', 'deu', 'xx'])}
+        info = {'filename': rnd.choice(['01 paper kites.mp3', 'Τραγούδι.flac', 'con.wav', '']),
+                'title': rnd.choice(['', 'Paper Kites', 'The Example Band - Paper Kites', 'Ήλιος: "Νέο"?']),
+                'artist': rnd.choice(['', 'The Example Band', 'Χαρταετοί'])}
         out.append({'lines': lines, 'meta': meta, 'duration': rnd.choice([None, 129.41, 10.0]), 'info': info,
                     'times': [rnd.uniform(0, 4000) for _ in range(20)] + [0.005, 0.015, 1.0049999, 59.995, 3599.9995],
                     'parse': ['1:02.5', '01:02:03,250', '12', '12.', 'x', '', '3:4:5.6', '1:2:3:4']})
@@ -50,7 +50,7 @@ class TestFormats(unittest.TestCase):
         self.assertEqual([(c['start'], c['end']) for c in cues], [(1.0, 3.0), (3.0, 3.5)])
 
     def test_greek_filename_and_bom(self):
-        self.assertEqual(F.build_base_name({'title': 'Ήλιος: "Νέο"?', 'artist': 'Μόνιτορ'}), 'Μόνιτορ - Ήλιος Νέο')
+        self.assertEqual(F.build_base_name({'title': 'Ήλιος: "Νέο"?', 'artist': 'Χαρταετοί'}), 'Χαρταετοί - Ήλιος Νέο')
         self.assertEqual(F.encode_file('x', True), b'\xef\xbb\xbfx')
         self.assertEqual(F.decode_text('Καλημέρα'.encode('cp1253'))[0], 'Καλημέρα')
 

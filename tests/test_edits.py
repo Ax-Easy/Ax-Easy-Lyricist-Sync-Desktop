@@ -26,10 +26,10 @@ def L(text, s, e, idx, **kw):
 
 
 def song():
-    lyrics = '[Verse]\nFire walls built out of alibis\nNo spark left to power the sound\n\n[Chorus]\nStay with me\n'
-    lines = [L('Fire walls built out of alibis', 10.0, 13.0, 0, conf=0.4, why=['weak'],
-               words=[['Fire', 10.0, 10.3, 0.9], [' walls', 10.3, 10.6, 0.2]]),
-             L('No spark left to power the sound', 13.2, 16.2, 1),
+    lyrics = '[Verse]\nRain drops falling on the window\nNo light left to guide the ships\n\n[Chorus]\nStay with me\n'
+    lines = [L('Rain drops falling on the window', 10.0, 13.0, 0, conf=0.4, why=['weak'],
+               words=[['Rain', 10.0, 10.3, 0.9], [' drops', 10.3, 10.6, 0.2]]),
+             L('No light left to guide the ships', 13.2, 16.2, 1),
              L('Stay with me', 17.0, 18.5, 2),
              L('Stay with me', 30.0, 31.5, 2, repeat=True)]
     return Song(lyrics, lines)
@@ -43,18 +43,18 @@ def exports(s):
 class TestEdit(unittest.TestCase):
     def test_edit_words_keeps_times_and_clears_check(self):
         s = song()
-        n = E.set_text(s, 0, '  Firewalls built   out of alibis ')
+        n = E.set_text(s, 0, '  Raindrops falling   on the window ')
         self.assertEqual(n, 1)
         l = s.result['lines'][0]
-        self.assertEqual(l['text'], 'Firewalls built out of alibis')
+        self.assertEqual(l['text'], 'Raindrops falling on the window')
         self.assertEqual((l['start'], l['end']), (10.0, 13.0))
         self.assertFalse(E.is_low(l))
         self.assertNotIn('words', l)          # amber words gone
         self.assertTrue(l['edited'] and s.edited and s.dirty)
         # the lyrics box keeps its tags and blank line
-        self.assertEqual(s.lyrics.splitlines(), ['[Verse]', 'Firewalls built out of alibis', 'No spark left to power the sound',
+        self.assertEqual(s.lyrics.splitlines(), ['[Verse]', 'Raindrops falling on the window', 'No light left to guide the ships',
                                                  '', '[Chorus]', 'Stay with me'])
-        self.assertEqual(E.set_text(s, 0, 'Firewalls built out of alibis'), 0)   # unchanged
+        self.assertEqual(E.set_text(s, 0, 'Raindrops falling on the window'), 0)   # unchanged
         self.assertEqual(E.set_text(s, 0, '   '), 0)                              # empty: refused
 
     def test_edit_greek_unicode(self):
@@ -86,21 +86,21 @@ class TestEdit(unittest.TestCase):
 class TestSplitMerge(unittest.TestCase):
     def test_split_middle_proportional(self):
         s = song()
-        r = E.split(s, 1)          # 'No spark left to power the sound' (32 chars)
+        r = E.split(s, 1)          # 'No light left to guide the ships' (32 chars)
         a, b = s.result['lines'][1], s.result['lines'][r]
-        self.assertEqual((a['text'], b['text']), ('No spark left to', 'power the sound'))
+        self.assertEqual((a['text'], b['text']), ('No light left to', 'guide the ships'))
         self.assertAlmostEqual(a['end'], 13.2 + 3.0 * 16 / 31, places=3)
         self.assertEqual(b['start'], a['end'])
         self.assertEqual(b['end'], 16.2)
-        self.assertEqual(split_lines(s.lyrics), ['Fire walls built out of alibis', 'No spark left to', 'power the sound',
+        self.assertEqual(split_lines(s.lyrics), ['Rain drops falling on the window', 'No light left to', 'guide the ships',
                                                  'Stay with me'])
         self.assertEqual([l['idx'] for l in s.result['lines']], [0, 1, 2, 3, 3])
 
     def test_split_at_cursor_and_time(self):
         s = song()
-        r = E.split(s, 0, cursor=10)     # 'Fire walls| built…'
-        self.assertEqual(s.result['lines'][0]['text'], 'Fire walls')
-        self.assertEqual(s.result['lines'][r]['text'], 'built out of alibis')
+        r = E.split(s, 0, cursor=10)     # 'Rain drops| falling…'
+        self.assertEqual(s.result['lines'][0]['text'], 'Rain drops')
+        self.assertEqual(s.result['lines'][r]['text'], 'falling on the window')
         s = song()
         r = E.split(s, 1, at_time=14.0)  # the playhead inside the line
         self.assertEqual(s.result['lines'][r]['start'], 14.0)
@@ -112,7 +112,7 @@ class TestSplitMerge(unittest.TestCase):
         s = song()
         self.assertTrue(E.merge(s, 0))
         l = s.result['lines'][0]
-        self.assertEqual(l['text'], 'Fire walls built out of alibis No spark left to power the sound')
+        self.assertEqual(l['text'], 'Rain drops falling on the window No light left to guide the ships')
         self.assertEqual((l['start'], l['end']), (10.0, 16.2))
         self.assertEqual(split_lines(s.lyrics), [l['text'], 'Stay with me'])
         self.assertIn('[Chorus]', s.lyrics)
@@ -122,7 +122,7 @@ class TestSplitMerge(unittest.TestCase):
         s = song()
         E.split(s, 1)
         E.merge(s, 1)
-        self.assertEqual(s.result['lines'][1]['text'], 'No spark left to power the sound')
+        self.assertEqual(s.result['lines'][1]['text'], 'No light left to guide the ships')
         self.assertEqual((s.result['lines'][1]['start'], s.result['lines'][1]['end']), (13.2, 16.2))
 
 
@@ -133,7 +133,7 @@ class TestInsertDeleteMusic(unittest.TestCase):
         self.assertEqual(r, 3)
         l = s.result['lines'][3]
         self.assertEqual((l['start'], l['end']), (18.5, 21.5))
-        self.assertEqual(split_lines(s.lyrics), ['Fire walls built out of alibis', 'No spark left to power the sound',
+        self.assertEqual(split_lines(s.lyrics), ['Rain drops falling on the window', 'No light left to guide the ships',
                                                  'Stay with me', 'Oh oh'])
 
     def test_insert_above_without_gap_takes_half(self):
@@ -149,7 +149,7 @@ class TestInsertDeleteMusic(unittest.TestCase):
     def test_delete(self):
         s = song()
         E.delete(s, 1)
-        self.assertEqual(split_lines(s.lyrics), ['Fire walls built out of alibis', 'Stay with me'])
+        self.assertEqual(split_lines(s.lyrics), ['Rain drops falling on the window', 'Stay with me'])
         self.assertEqual(len(s.result['lines']), 3)
 
     def test_delete_first_occurrence_promotes_repeat(self):
@@ -164,9 +164,9 @@ class TestInsertDeleteMusic(unittest.TestCase):
         l = s.result['lines'][1]
         self.assertTrue(l['inst'] and not l['auto'])
         self.assertEqual(l['text'], '♪')
-        self.assertNotIn('No spark left to power the sound', s.lyrics)
-        self.assertEqual(E.unmark_inst(s, 1), 'No spark left to power the sound')
-        self.assertIn('No spark left to power the sound', split_lines(s.lyrics))
+        self.assertNotIn('No light left to guide the ships', s.lyrics)
+        self.assertEqual(E.unmark_inst(s, 1), 'No light left to guide the ships')
+        self.assertIn('No light left to guide the ships', split_lines(s.lyrics))
         # an auto ♪ line, unmarked: stays gone when ♪ lines are recomputed
         s.result['lines'].insert(0, I.make_line('♪', 0.0, 9.7, True, 'intro', 'intro'))
         E.unmark_inst(s, 0, 'Intro words')
@@ -179,21 +179,21 @@ class TestUndo(unittest.TestCase):
         h = E.History()
         orig = (E.capture(s)['result']['lines'], s.lyrics)
         h.push(s, 'Edit line')
-        E.set_text(s, 0, 'Firewalls built out of alibis')
+        E.set_text(s, 0, 'Raindrops falling on the window')
         h.push(s, 'Split line')
         E.split(s, 1)
         h.push(s, 'Delete line')
         E.delete(s, 0)
         self.assertEqual(len(s.result['lines']), 4)
         self.assertEqual(h.undo(s), 'Delete line')
-        self.assertEqual(s.result['lines'][0]['text'], 'Firewalls built out of alibis')
+        self.assertEqual(s.result['lines'][0]['text'], 'Raindrops falling on the window')
         self.assertEqual(h.undo(s), 'Split line')
         self.assertEqual(h.undo(s), 'Edit line')
         self.assertEqual((s.result['lines'], s.lyrics), orig)
         self.assertFalse(s.edited)
         self.assertIsNone(h.undo(s))
         self.assertEqual(h.redo(s), 'Edit line')
-        self.assertEqual(s.result['lines'][0]['text'], 'Firewalls built out of alibis')
+        self.assertEqual(s.result['lines'][0]['text'], 'Raindrops falling on the window')
         self.assertTrue(s.edited)
         h.redo(s)
         h.redo(s)
@@ -244,16 +244,16 @@ class TestRealign(unittest.TestCase):
 class TestExportReflects(unittest.TestCase):
     def test_every_format_shows_edits(self):
         s = song()
-        E.set_text(s, 0, 'Τείχη από άλλοθι')
+        E.set_text(s, 0, 'Σταγόνες στο τζάμι')
         E.split(s, 1)
         E.set_times(s, 0, start=9.5)
         out = exports(s)
-        self.assertIn('[00:09.50]Τείχη από άλλοθι', out['lrc'])
-        self.assertIn('[00:14.75]power the sound', out['lrc'])
+        self.assertIn('[00:09.50]Σταγόνες στο τζάμι', out['lrc'])
+        self.assertIn('[00:14.75]guide the ships', out['lrc'])
         self.assertIn('00:00:09,500 --> ', out['srt'])
-        self.assertIn('power the sound', out['vtt'])
-        self.assertIn('Τείχη από άλλοθι', out['ttml'])
-        self.assertNotIn('Fire walls', out['ttml'])
+        self.assertIn('guide the ships', out['vtt'])
+        self.assertIn('Σταγόνες στο τζάμι', out['ttml'])
+        self.assertNotIn('Rain drops', out['ttml'])
 
 
 class TestLyricsRebuild(unittest.TestCase):

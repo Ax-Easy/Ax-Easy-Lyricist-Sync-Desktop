@@ -120,10 +120,10 @@ class TestTiming(unittest.TestCase):
         s.sound(3, 21, -14)          # hummed intro (vocal, so VAD is on)
         s.bleed(3.2, 20.5, 'r', 0.5)
         s.sound(22, 36, -12)
-        s.chars(22.0, 'remember us', prob=0.3)
-        s.chars(28.0, 'as a system failure')
+        s.chars(22.0, 'think of us', prob=0.3)
+        s.chars(28.0, 'as a passing season')
         anchors = [[(0, 22.05, 22.5, 0.0), (1, 22.6, 22.9, 0.0)], [(0, 28.0, 28.3, 0.0)]]
-        occ = run(s, ['remember us', 'as a system failure'], anchors)
+        occ = run(s, ['think of us', 'as a passing season'], anchors)
         self.assertAlmostEqual(occ[0]['start'], 22.0, delta=0.3)
 
     def test_monotonic_with_overlap(self):

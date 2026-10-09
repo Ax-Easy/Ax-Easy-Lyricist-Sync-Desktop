@@ -3,7 +3,7 @@
 intro_long  32 s instrumental intro with a vocal-like formant lead synth (bleeds into the
             Demucs vocals stem), then the first line.
 intro_hum   intro with a hummed 'mmm/ooh' (synthetic voice with vibrato), an ad-lib
-            "Ohhh, I wonder" that is not in the lyrics (like Stoned), then line 1.
+            "Ohhh, I wonder" that is not in the lyrics (as in many real songs), then line 1.
 choir       lead lines, a section sung by a 4-voice choir (staggered entries, different
             pitches/voices), and lead lines with backing 'ooh' pads and echoed words that
             overlap the next lead line.
@@ -153,7 +153,7 @@ def intro_bleed():
 
 
 def intro_hum():
-    lines = ['Remember us as a system failure', 'Every light was turning grey',
+    lines = ['Think of us as a passing season', 'Every light was turning grey',
              'Hold me closer, hold me down', 'Till the morning finds a way']
     total = int(44 * SR)
     voc = np.zeros(total, 'float32')
