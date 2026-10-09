@@ -150,8 +150,21 @@ class AudioCache(QObject):
                 d.finished.disconnect()
             except (RuntimeError, TypeError):
                 pass
-            d.stop()
-            d.deleteLater()
+            if sys.platform == 'darwin':
+                # Qt 6.7 on macOS: QAudioDecoder.stop() while the FFmpeg backend is decoding never returns
+                # (seen in CI when another song is selected mid-decode). Let it run to the end unobserved
+                # and delete it then; its output is ignored.
+                self._orphans = [o for o in getattr(self, '_orphans', []) if o is not None] + [d]
+
+                def _gone(_=None, d=d):
+                    if d in self._orphans:
+                        self._orphans.remove(d)
+                        d.deleteLater()
+                d.finished.connect(_gone)
+                d.error.connect(_gone)
+            else:
+                d.stop()
+                d.deleteLater()
         self._chunks = []
 
     def _buffer(self):
