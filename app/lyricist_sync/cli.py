@@ -37,6 +37,9 @@ def main(argv=None):
     ap.add_argument('--setup', action='store_true', help='download and install the engine without the GUI')
     ap.add_argument('--variant', choices=['auto', 'cuda', 'cpu'], default='auto')
     ap.add_argument('--sync', metavar='AUDIO', nargs='+', help='sync audio files without the GUI')
+    ap.add_argument('--transcribe', metavar='AUDIO', nargs='+', help='no lyrics needed: Whisper writes the lines '
+                    '(saves AUDIO.transcript.txt and the timed files)')
+    ap.add_argument('--whisper', default='auto', help='Whisper size: auto (by hardware), small, medium, large-v3-turbo, large-v3')
     ap.add_argument('--lyrics', metavar='TXT', help='lyrics file (default: same name .txt next to the audio)')
     ap.add_argument('--lang', default='auto')
     ap.add_argument('--no-music-lines', action='store_true', help='don\'t add ♪ lines in instrumental parts')
@@ -67,7 +70,7 @@ def main(argv=None):
         _console()
         from .setup_test import run_update_test
         return _hard_exit(run_update_test(a.update_test, a.install, a.report))
-    headless = a.version or a.selftest or a.screens or a.setup or a.sync or a.screens_maximized
+    headless = a.version or a.selftest or a.screens or a.setup or a.sync or a.screens_maximized or a.transcribe
     if not headless:
         from .app import run_gui
         return run_gui([argv[0]] + a.files)
@@ -87,7 +90,7 @@ def main(argv=None):
         return _hard_exit(render_maximized(a.screens_maximized, a.fixture))
     if a.setup:
         return cli_setup(a.variant)
-    if a.sync:
+    if a.sync or a.transcribe:
         return cli_sync(a)
     return 0
 
@@ -129,6 +132,12 @@ def cli_sync(a):
     if not bootstrap.is_ready():
         print('The engine is not set up. Run LyricistSync --setup first (or start the app once).')
         return 2
+    st = bootstrap.state() or {}
+    eng = st.get('engine') or {}
+    tier = bootstrap.whisper_tier(eng.get('vram_gb') if eng.get('device') == 'cuda' else None, st.get('variant', 'cpu'))
+    whisper = bootstrap.effective_whisper(a.whisper, tier, bootstrap.whisper_installed())
+    mode = 'transcribe' if a.transcribe else 'sync'
+    print('Whisper: %s (hardware tier %s)' % (whisper, tier), flush=True)
     py = paths.runtime_python()
     proc = bootstrap.popen([py, '-u', paths.engine_script(), '--models', paths.models_dir(), 'serve'], stdin=subprocess.PIPE,
                            stdout=subprocess.PIPE, stderr=open(os.path.join(paths.home(), 'engine.log'), 'a'),
@@ -139,20 +148,27 @@ def cli_sync(a):
     class S:  # minimal song object for export_song
         pass
 
-    for n, audio in enumerate(a.sync):
-        if a.lyrics:
+    for n, audio in enumerate(a.transcribe or a.sync):
+        if mode == 'transcribe':
+            lang = None if a.lang in ('', 'auto') else resolve_lang(a.lang, [])[0]
+            job = {'cmd': 'transcribe', 'id': str(n), 'audio': os.path.abspath(audio), 'lang': lang, 'whisper': whisper}
+            iso = ''
+            lines = []
+        elif a.lyrics:
             with open(a.lyrics, 'rb') as f:
                 text = decode_text(f.read())[0]
         else:
             text = sidecar_lyrics(audio)[0] or ''
-        lines = split_lines(text)
-        if not lines:
-            print('%s: no lyrics found' % audio)
-            rc = 1
-            continue
-        lang, iso = resolve_lang(a.lang, lines)
-        proc.stdin.write((json.dumps({'cmd': 'sync', 'id': str(n), 'audio': os.path.abspath(audio), 'lines': lines,
-                                      'lang': lang, 'iso': iso}, ensure_ascii=False) + '\n').encode('utf-8'))
+        if mode == 'sync':
+            lines = split_lines(text)
+            if not lines:
+                print('%s: no lyrics found' % audio)
+                rc = 1
+                continue
+            lang, iso = resolve_lang(a.lang, lines)
+            job = {'cmd': 'sync', 'id': str(n), 'audio': os.path.abspath(audio), 'lines': lines, 'lang': lang, 'iso': iso,
+                   'whisper': whisper}
+        proc.stdin.write((json.dumps(job, ensure_ascii=False) + '\n').encode('utf-8'))
         proc.stdin.flush()
         res = None
         for raw in proc.stdout:
@@ -179,6 +195,18 @@ def cli_sync(a):
             s.iso = {'en': 'eng', 'el': 'ell'}.get(res['language'], '')
         out = a.out or os.path.dirname(os.path.abspath(audio))
         files = export_song(s, {'dir': out, 'formats': a.formats.split(','), 'bom': a.bom})
+        if mode == 'transcribe':
+            tp = os.path.join(out, os.path.splitext(os.path.basename(audio))[0] + '.transcript.txt')
+            with open(tp, 'w', encoding='utf-8') as f:
+                f.write(res.get('text', '') + '\n')
+            files.append(tp)
+            low = sum(1 for l in res['lines'] if (l.get('conf') if l.get('conf') is not None else 1) < 0.6 and not l.get('inst'))
+            print('%s: transcribed %d lines (%s, Whisper %s, %d to check, %d segments dropped), %.1f s on %s → %s' % (
+                os.path.basename(audio), sum(1 for l in res['lines'] if not l.get('inst')), res.get('language'),
+                res.get('whisper'), low, len(res.get('dropped') or []), res['timings']['total'], res['device'],
+                ', '.join(files)), flush=True)
+            report.append({'audio': audio, 'files': files, 'result': res})
+            continue
         print('%s: %d lines (+%d music), %d repeats, %.1f s on %s → %s' % (
             os.path.basename(audio), sum(1 for l in res['lines'] if not l.get('inst')), sum(1 for l in res['lines'] if l.get('inst')), len(res['repeats']),
                                                                res['timings']['total'], res['device'], ', '.join(files)), flush=True)

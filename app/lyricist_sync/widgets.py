@@ -7,6 +7,7 @@ from .theme import ACCENT, ACCENT_2
 
 STATE = {'dark': True}  # current theme for custom-painted widgets
 AMBER = '#E0A106'      # 'check this line' marker
+WORDS_ROLE = Qt.UserRole + 2   # review text cell: [(word, unsure)] from Transcribe
 
 
 class GlassCard(QWidget):
@@ -360,4 +361,33 @@ class GlassRowDelegate(QStyledItemDelegate):
         o.state &= ~QStyle.StateFlag.State_Selected
         o.state &= ~QStyle.StateFlag.State_HasFocus
         o.state &= ~QStyle.StateFlag.State_MouseOver
+        words = idx.data(WORDS_ROLE)
+        if words:
+            o.text = ''
         view.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, o, p, view)
+        if words:   # Transcribe: draw the words ourselves, the unsure ones in amber
+            self._paint_words(p, o, words, view)
+
+    def _paint_words(self, p, o, words, view):
+        p.save()
+        r = view.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, o, view).adjusted(3, 0, -3, 0)
+        p.setClipRect(r)
+        p.setFont(o.font)
+        fm = p.fontMetrics()
+        base = o.palette.color(QPalette.ColorRole.Text)
+        x = r.left()
+        y = r.top() + (r.height() + fm.ascent() - fm.descent()) / 2
+        space = fm.horizontalAdvance(' ')
+        for w, low in words:
+            w = w.strip()
+            wd = fm.horizontalAdvance(w)
+            if x + wd > r.right():
+                p.setPen(base)
+                p.drawText(QPointF(x, y), '…')
+                break
+            p.setPen(QColor(AMBER) if low else base)
+            p.drawText(QPointF(x, y), w)
+            if low:
+                p.drawLine(QPointF(x, y + 2.5), QPointF(x + wd, y + 2.5))
+            x += wd + space
+        p.restore()

@@ -234,12 +234,19 @@ class _TqdmModule:
 
 # ---------------------------------------------------------------- engine
 import timing as TM  # noqa: E402  (engine/timing.py next to this script)
+import transcribe as TR  # noqa: E402  (engine/transcribe.py: Transcribe mode lines)
 
 STEMS = {  # vocal separation models: name -> (yaml models line, weights file)
     'htdemucs': ("models: ['955717e8']\n", '955717e8-8726e21a.th'),
     'htdemucs_ft': ("models: ['04573f0d']\n", '04573f0d-f3cf25b2.th'),  # the vocals model of htdemucs_ft
 }
-CACHE_VERSION = 2
+CACHE_VERSION = 3
+# Whisper's language detector sometimes picks Latin for sung Greek or Italian (and a few rare
+# languages for mumbled vowels); nobody needs those for lyrics, so the next guess is used.
+NEVER_SUNG = {'la', 'haw', 'ln', 'jw', 'su', 'sn', 'yo', 'nn', 'ba', 'tt', 'bo', 'mt', 'sa', 'lb'}
+# Whisper sizes, best first. Which one is used is chosen by the app (hardware tier or the user's pick in
+# Engine settings); when that file is missing the engine falls back to the best one that is installed.
+WHISPER_SIZES = ['large-v3', 'large-v3-turbo', 'medium', 'small']
 
 
 class Engine:
@@ -259,6 +266,8 @@ class Engine:
             torch.set_num_threads(max(1, os.cpu_count() or 1))
         self.stem = self._pick_stem()
         self._demucs = self._whisper = self._mms = None
+        self._whisper_name = None
+        self.whisper_want = os.environ.get('LYRICIST_SYNC_WHISPER') or 'small'
 
     def _pick_stem(self):
         """htdemucs by default. The htdemucs_ft vocals model was evaluated for 1.1.0 (choir and
@@ -290,10 +299,34 @@ class Engine:
             self._demucs = m.to(self.device).eval()
         return self._demucs
 
-    def whisper(self):
+    def whisper_installed(self):
+        d = os.path.join(self.models, 'whisper')
+        return [n for n in WHISPER_SIZES if os.path.exists(os.path.join(d, n + '.pt'))]
+
+    def whisper_name(self, want=None):
+        """The Whisper size that will be used: the wanted one when installed, else the best installed."""
+        want = want or self.whisper_want
+        have = self.whisper_installed()
+        if want in have or not have:
+            return want
+        return have[0]
+
+    def whisper(self, want=None):
+        name = self.whisper_name(want)
+        if self._whisper is not None and self._whisper_name != name:
+            self._whisper = None  # one Whisper model in memory at a time
+            import gc
+            gc.collect()
+            if self.device == 'cuda':
+                self.torch.cuda.empty_cache()
         if self._whisper is None:
             import whisper
-            self._whisper = whisper.load_model('small', device=self.device, download_root=os.path.join(self.models, 'whisper'))
+            path = os.path.join(self.models, 'whisper', name + '.pt')
+            if not os.path.exists(path):
+                raise RuntimeError('Whisper model "%s" is not installed. Open Engine settings to download it.' % name)
+            log('loading Whisper %s on %s' % (name, self.device))
+            self._whisper = whisper.load_model(path, device=self.device)
+            self._whisper_name = name
         return self._whisper
 
     def mms(self):
@@ -343,12 +376,77 @@ class Engine:
         old = wt.tqdm
         wt.tqdm = _TqdmModule(cb)
         try:
-            r = self.whisper().transcribe(vocals16.numpy(), language=lang, word_timestamps=True,
+            r = self.whisper(self.whisper_want).transcribe(vocals16.numpy(), language=lang, word_timestamps=True,
                                           condition_on_previous_text=False, fp16=(self.device == 'cuda'), verbose=False)
         finally:
             wt.tqdm = old
         words = [(w['word'], round(w['start'], 2), round(w['end'], 2)) for s in r['segments'] for w in s.get('words', [])]
         return words, r.get('language'), [{'start': s['start'], 'end': s['end'], 'text': s['text']} for s in r['segments']]
+
+    def detect_language(self, v16, vad):
+        """Whisper language detection on the 30 s with the most singing (not the first 30 s of the
+        file, which is often an instrumental intro)."""
+        import whisper
+        model = self.whisper(self.whisper_want)
+        regs = vad.regions()
+        dur = v16.shape[0] / 16000
+        best, best_t = -1, 0.0
+        for t0 in [a for a, _b in regs][:40] or [0.0]:
+            t0 = max(0.0, min(t0, dur - 30))
+            cov = TR.overlap(t0, t0 + 30, regs)
+            if cov > best:
+                best, best_t = cov, t0
+        seg = v16[int(best_t * 16000):int(best_t * 16000) + 30 * 16000]
+        mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(seg.float()), n_mels=model.dims.n_mels).to(self.device)
+        if self.device == 'cuda':
+            mel = mel.half()
+        _tok, probs = model.detect_language(mel)
+        top = sorted(probs, key=probs.get, reverse=True)[:4]
+        lang = next((x for x in top if x not in NEVER_SUNG), top[0])
+        log('language detected: %s (top: %s) on %.0f-%.0f s' % (
+            lang, ', '.join('%s %.0f%%' % (x, 100 * probs[x]) for x in top), best_t, best_t + 30))
+        return lang, float(probs[lang])
+
+    def transcribe_full(self, v16, vad, lang, cb):
+        """Transcribe mode: Whisper with hallucination guards -> (kept segments, dropped, language)."""
+        import whisper  # noqa: F401
+        regs = vad.regions()
+        dur = v16.shape[0] / 16000
+        # only feed Whisper the parts where the vocals stem is active (padded, small gaps merged)
+        clips = []
+        for a, b in regs:
+            a, b = max(0.0, a - 0.4), min(dur, b + 0.4)
+            if clips and a - clips[-1][1] < 2.0:
+                clips[-1][1] = b
+            else:
+                clips.append([a, b])
+        if not clips:
+            raise RuntimeError('No singing found in this song (the vocals stem is silent).')
+        flat = [round(x, 2) for c in clips for x in c]
+        conf = None
+        if not lang:
+            lang, conf = self.detect_language(v16, vad)
+        wt = sys.modules['whisper.transcribe']
+        old = wt.tqdm
+        wt.tqdm = _TqdmModule(cb)
+        try:
+            r = self.whisper(self.whisper_want).transcribe(
+                v16.numpy(), language=lang, task='transcribe', word_timestamps=True,
+                condition_on_previous_text=False, temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                compression_ratio_threshold=2.4, logprob_threshold=-1.0, no_speech_threshold=0.6,
+                clip_timestamps=flat, hallucination_silence_threshold=2.0,
+                fp16=(self.device == 'cuda'), verbose=None)
+        finally:
+            wt.tqdm = old
+        segs = [{'start': float(s['start']), 'end': float(s['end']), 'text': s['text'], 'avg_logprob': float(s['avg_logprob']),
+                 'no_speech_prob': float(s['no_speech_prob']), 'compression_ratio': float(s['compression_ratio']),
+                 'temperature': float(s['temperature']),
+                 'words': [{'word': w['word'], 'start': float(w['start']), 'end': float(w['end']),
+                            'probability': float(w['probability'])} for w in s.get('words', [])]}
+                for s in r['segments']]
+        self._raw_segments = segs
+        kept, dropped = TR.filter_segments(segs, regs, log=log)
+        return kept, dropped, r.get('language') or lang, conf
 
     def emissions(self, vocals16, cb):
         """MMS_FA log-probs [frames, vocab+star] on 16 kHz mono vocals, 30 s chunks with 2 s context."""
@@ -385,8 +483,13 @@ class Engine:
         try:
             os.makedirs(self.cache, exist_ok=True)
             f = os.path.join(self.cache, self._key(path) + '.npz')
+            extra = {}
+            if an.get('v16') is not None:
+                extra['v16'] = an['v16'].numpy().astype('float16')
             np.savez_compressed(f + '.tmp.npz', em=an['em'].numpy().astype('float16'), fs=an['fs'], db=an['vad'].db,
-                                duration=an['duration'], words=json.dumps(an.get('words') or [], ensure_ascii=False))
+                                duration=an['duration'], words=json.dumps(an.get('words') or [], ensure_ascii=False),
+                                meta=json.dumps({'whisper': an.get('whisper'), 'language': an.get('language'),
+                                                 'segments': an.get('segments') or []}, ensure_ascii=False), **extra)
             os.replace(f + '.tmp.npz', f)
             files = sorted((os.path.join(self.cache, x) for x in os.listdir(self.cache) if x.endswith('.npz')),
                            key=os.path.getmtime, reverse=True)
@@ -402,9 +505,13 @@ class Engine:
             return None
         try:
             d = np.load(f)
+            meta = json.loads(str(d['meta'])) if 'meta' in d.files else {}
             return {'em': self.torch.from_numpy(d['em'].astype('float32')), 'fs': float(d['fs']),
                     'vad': TM.Vad(db=d['db']), 'duration': float(d['duration']),
-                    'words': [tuple(w) for w in json.loads(str(d['words']))]}
+                    'words': [tuple(w) for w in json.loads(str(d['words']))],
+                    'v16': self.torch.from_numpy(d['v16'].astype('float32')) if 'v16' in d.files else None,
+                    'whisper': meta.get('whisper'), 'language': meta.get('language'),
+                    'segments': meta.get('segments') or [], 'timings': {}, 'cached': True}
         except Exception as e:  # corrupt cache: recompute
             log('cache unreadable (%s); recomputing' % e)
             return None
@@ -449,7 +556,8 @@ class Engine:
         vad = TM.Vad(v16.numpy())
         t['emissions'] = time.time() - t1
         an = {'em': em, 'fs': fs, 'vad': vad, 'duration': duration, 'words': words, 'language': wlang,
-              'segments': segments, 'timings': t, 'align_cb': cb}
+              'segments': segments, 'timings': t, 'align_cb': cb, 'v16': v16,
+              'whisper': self._whisper_name if transcript else None}
         return an
 
     def _occ_words(self, texts, iso):
@@ -491,7 +599,19 @@ class Engine:
         if not lines:
             raise RuntimeError('No lyrics lines.')
         iso = job.get('iso') or ''
-        an = self.analyse(job['audio'], job.get('lang'), progress, transcript=job.get('repeats', True))
+        want_tr = job.get('repeats', True)
+        an = self.load_analysis(job['audio']) if job.get('reuse', True) else None
+        if an is not None and want_tr and not (an['words'] and an.get('whisper') == self.whisper_name()):
+            an = None  # cached without (this model's) transcript: analyse again
+        if an is not None:
+            log('using the cached analysis of this song (vocals, emissions%s)' % (', transcript' if an['words'] else ''))
+            if job.get('lang') and an.get('language') and job['lang'] != an['language']:
+                log('note: transcript language %s, lyrics language %s' % (an['language'], job['lang']))
+            for k in ('separate', 'transcribe'):
+                progress(k, 1.0)
+            an['align_cb'] = lambda f: progress('align', 0.85 + 0.15 * f)
+        else:
+            an = self.analyse(job['audio'], job.get('lang'), progress, transcript=want_tr)
         t = an['timings']
         t1 = time.time()
         line_words = self._occ_words(lines, iso)
@@ -520,7 +640,8 @@ class Engine:
         t['total'] = time.time() - T0
         low = sum(1 for o in out if o.get('conf', 1) < TM.LOW_CONF)
         return {'lines': out, 'duration': round(an['duration'], 3), 'language': an['language'], 'repeats': repeats,
-                'device': self.device, 'stem': self.stem, 'low_conf': low, 'version': 3,
+                'device': self.device, 'stem': self.stem, 'low_conf': low, 'version': 3, 'mode': 'sync',
+                'whisper': an.get('whisper'), 'cached': bool(an.get('cached')),
                 'vocals': vocal_regions(an['vad']),
                 'timings': {k: round(v, 2) for k, v in t.items()}, 'transcript': an['segments']}
 
@@ -561,10 +682,88 @@ class Engine:
         return {'from': k0, 'lines': out[k0:], 'vocals': vocal_regions(an['vad']),
                 'timings': {'total': round(time.time() - T0, 2)}}
 
+    def transcribe_job(self, job, progress):
+        """No lyrics needed: Whisper writes the lines (with times and per-word confidence).
+        The analysis (vocals, emissions, transcript) is cached so the following Auto-sync on the
+        corrected text only runs the aligner."""
+        T0 = time.time()
+        lang = job.get('lang') or None
+        an = self.load_analysis(job['audio']) if job.get('reuse', True) else None
+        if an is not None and an.get('v16') is None:
+            an = None
+        t = {}
+        if an is None:
+            an = self.analyse(job['audio'], lang, lambda s, f: progress(s, f * 0.6 if s != 'transcribe' else f), transcript=False)
+            t.update(an['timings'])
+        progress('transcribe', 0.0)
+        t1 = time.time()
+        if job.get('whisper_segments') is not None:   # test hook: re-run the post-processing on saved Whisper output
+            self._raw_segments = job['whisper_segments']
+            kept, dropped = TR.filter_segments(self._raw_segments, an['vad'].regions(), log=log)
+            language, lconf = job.get('language') or lang, None
+            self._whisper_name = job.get('whisper_name') or self._whisper_name
+        else:
+            kept, dropped, language, lconf = self.transcribe_full(an['v16'], an['vad'], lang, lambda f: progress('transcribe', f))
+        t['transcribe'] = time.time() - t1
+        lines = TR.build_lines(kept, an['vad'].regions())
+        if lines and job.get('align', True):
+            t1 = time.time()
+            self._align_transcript(lines, an, language)
+            t['align'] = time.time() - t1
+        if job.get('snap', TR_SNAP):
+            TR.snap_starts(lines, an['vad'].regions())
+        for l in lines:
+            l.update({'repeat': False, 'flag': '', 'mode': 'transcribe'})
+        an['words'] = [(w[0], round(w[1], 2), round(w[2], 2)) for l in lines for w in l['words']]
+        an['segments'] = [{'start': s['start'], 'end': s['end'], 'text': s['text']} for s in kept]
+        an['language'], an['whisper'] = language, self._whisper_name
+        self.save_analysis(job['audio'], an)
+        progress('transcribe', 1.0)
+        t['total'] = time.time() - T0
+        low = sum(1 for l in lines if l['conf'] < TR.LOW_LINE)
+        return {'mode': 'transcribe', 'lines': lines, 'duration': round(an['duration'], 3), 'language': language,
+                'language_conf': lconf, 'whisper': self._whisper_name, 'device': self.device, 'stem': self.stem,
+                'low_conf': low, 'version': 3, 'vocals': vocal_regions(an['vad']),
+                'dropped': [{'start': round(s['start'], 2), 'end': round(s['end'], 2), 'text': s['text'].strip(), 'why': why}
+                            for s, why in dropped],
+                'text': '\n'.join(l['text'] for l in lines), 'timings': {k: round(v, 2) for k, v in t.items()},
+                **({'whisper_segments': self._raw_segments} if job.get('raw') else {})}
+
+    def _align_transcript(self, lines, an, language):
+        """Whisper's word times run early (each word starts where the previous one ended), so the line
+        starts come from the MMS_FA aligner run on Whisper's own text, with the same timing checks as
+        Auto-sync. A line keeps Whisper's time when the aligner puts it more than 1.5 s away."""
+        iso = {'el': 'ell', 'en': 'eng'}.get(language or '', '')
+        texts = [l['text'] for l in lines]
+        occ_words = self._occ_words(texts, iso)
+        _b, _m, vocab, star = self.mms()
+        em, fs = an['em'], an['fs']
+        occ = TM.align_window(em, fs, occ_words, 0, em.shape[0], vocab, star)
+        if occ is None:
+            return
+        anchors = [[(0, l['words'][0][1], l['words'][0][2], 0.0)] if l['words'] else [] for l in lines]
+        TM.refine(occ, occ_words, em, fs, an['vad'], anchors, an['duration'], vocab, star, log=log)
+        TM.monotonic(occ, an['duration'])
+        moved = 0
+        for l, o in zip(lines, occ):
+            if o and abs(o['start'] - l['start']) <= 1.5:
+                l['whisper_start'] = l['start']
+                l['start'], l['end'] = round(o['start'], 3), round(max(o['end'], o['start'] + 0.2), 3)
+                moved += 1
+        for a, b in zip(lines, lines[1:]):
+            if b['start'] <= a['start']:
+                b['start'] = round(a['start'] + 0.05, 3)
+            if a['end'] > b['start']:
+                a['end'] = b['start']
+        log('transcribe: %d of %d line starts from the aligner' % (moved, len(lines)))
+
     def _vocab(self):
         import torchaudio
         v = torchaudio.pipelines.MMS_FA.get_dict(star='*')
         return v, v['*']
+
+
+TR_SNAP = False  # snapping line starts to vocal onsets: measured on Stoned, see tests/eval_transcribe.py
 
 
 def vocal_regions(vad):
@@ -589,7 +788,8 @@ def main():
     ap.add_argument('--models', required=True)
     ap.add_argument('--device', default='auto')
     ap.add_argument('--cache', default=None)
-    ap.add_argument('cmd', choices=['serve', 'check', 'sync'])
+    ap.add_argument('--whisper', default=None, help='Whisper size (small, medium, large-v3-turbo, large-v3)')
+    ap.add_argument('cmd', choices=['serve', 'check', 'sync', 'transcribe'])
     ap.add_argument('args', nargs='*')
     a = ap.parse_args()
     os.environ['TORCH_HOME'] = os.path.join(a.models, 'torch')
@@ -599,10 +799,20 @@ def main():
     except Exception as e:
         emit(event='error', error='Engine failed to start: %s' % e, trace=traceback.format_exc())
         return 2
-    emit(event='hello', **eng.info())
+    if a.whisper:
+        eng.whisper_want = a.whisper
+    emit(event='hello', whisper=eng.whisper_name(), whisper_installed=eng.whisper_installed(), **eng.info())
     if a.cmd == 'check':
         import demucs, whisper, torchaudio, uroman, av  # noqa: F401  (import check)
         emit(event='ok', torchaudio=torchaudio.__version__)
+        return 0
+    if a.cmd == 'transcribe':
+        audio, out = a.args[:2]
+        lang = a.args[2] if len(a.args) > 2 else None
+        res = eng.transcribe_job({'audio': audio, 'lang': lang, 'raw': True},
+                                 lambda s, f: emit(event='progress', stage=s, pct=round(f, 3)))
+        json.dump(res, open(out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+        emit(event='result', id='cli', result={k: v for k, v in res.items() if k != 'lines'})
         return 0
     if a.cmd == 'sync':
         audio, lyrics, out = a.args[:3]
@@ -626,8 +836,10 @@ def main():
         if job.get('cmd') == 'quit':
             break
         jid = job.get('id')
+        if job.get('whisper'):
+            eng.whisper_want = job['whisper']
         try:
-            fn = eng.resync if job.get('cmd') == 'resync' else eng.sync
+            fn = {'resync': eng.resync, 'transcribe': eng.transcribe_job}.get(job.get('cmd'), eng.sync)
             res = fn(job, lambda s, f, jid=jid: emit(event='progress', id=jid, stage=s, pct=round(f, 3)))
             emit(event='result', id=jid, result=res, cmd=job.get('cmd', 'sync'))
         except Exception as e:  # report and keep serving the queue

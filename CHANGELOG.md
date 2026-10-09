@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.3.0 (2026-10-09)
+
+### Transcribe: no lyrics needed
+- New **Transcribe** button, and **Transcribe all** for every song that has no lyrics yet. **Auto-sync** on a song
+  without lyrics transcribes it too.
+- Whisper listens to the separated vocals (Demucs) with word timestamps. The language is detected on the 30 s
+  with the most singing (not the instrumental intro); the Language box overrides it. Greek works.
+- Lines follow the singing: Whisper's phrases, pauses longer than 0.6 s, punctuation, and at most about 42
+  characters per line. If Whisper ends a phrase with the first word of the next line (*"…the sound You"*), that
+  word moves to the next line.
+- Line starts come from the MMS_FA aligner run on Whisper's own text, with the same checks as Auto-sync,
+  because Whisper's word times run early. The ♪ gap logic runs as usual.
+- **Unsure words are amber** in the line list and underlined in the lyrics box (Whisper word probability below
+  45 %). Lines with low confidence get the amber **● check** marker with the reason.
+- Recommended workflow: **Transcribe → fix the amber words → Auto-sync**. Auto-sync then reuses the cached vocals,
+  emissions and transcript, so it only runs the aligner.
+- Against hallucinations:
+  - Whisper only hears the parts where the vocals stem is active;
+  - condition_on_previous_text is off;
+  - temperature fallback is on, with compression-ratio, log-prob and no-speech thresholds;
+  - segments are dropped when there are no vocals under them, when Whisper loops on one line, when they are
+    gibberish, humming or a known filler ("Thank you for watching", "Subtitles by…", "Υπότιτλοι…").
+- Command line: `LyricistSync.exe --transcribe song.mp3 [--lang el] [--whisper large-v3]` writes the timed files
+  and `song.transcript.txt`.
+
+### Whisper model by hardware
+- Setup picks the Whisper size from the GPU memory (nvidia-smi):
+
+  | Hardware | Whisper |
+  |---|---|
+  | CPU, or a GPU under 6 GB | small (0.48 GB) |
+  | 6–11 GB | medium (1.53 GB) |
+  | 12–23 GB | large-v3-turbo (1.62 GB) |
+  | 24 GB and more (e.g. RTX 3090) | large-v3 (3.09 GB) |
+
+  Only that one model is downloaded.
+- **Engine** settings (button next to Light/Dark) show:
+  - the detected hardware and the model in use;
+  - a dropdown with Auto, small, medium, large-v3-turbo and large-v3, with size, speed and accuracy hints.
+- Picking a model that is not downloaded yet fetches it on the spot, with the same per-step progress, resume
+  and SHA256 check as the setup. Models that are not in use can be deleted.
+- Whisper runs in fp16 on CUDA and in fp32 on the CPU.
+- Demucs and the MMS aligner are the same on every tier.
+- **Updating from 1.2.0** keeps PyTorch and every model. If the GPU's tier is bigger than the installed small
+  model, the app asks once whether to download it. Until then (or after a No) small keeps working.
+
+### Measured (CPU, 8 cores)
+WHISPER_TABLE
+
 ## 1.2.0 (2026-10-09)
 
 ### ♪ in instrumental parts

@@ -121,7 +121,7 @@ CI writes `update.json` next to the installer, with the real SHA256 and size (`t
 fields are:
 
 ```json
-{"version": "1.2.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.2.0.exe",
+{"version": "1.3.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.3.0.exe",
  "sha256": "…", "size": 52000000, "minimum_os": "10.0.17763"}
 ```
 
@@ -151,7 +151,7 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Setup-1.2.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Setup-1.3.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`. Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
