@@ -127,7 +127,7 @@ def enable_native_frame(hwnd, dwm_frame=False):
 
 def frame_thickness(hwnd):
     try:
-        dpi = user32.GetDpiForWindow(int(hwnd))
+        dpi = user32.GetDpiForWindow(int(hwnd or 0))
         return user32.GetSystemMetricsForDpi(32, dpi) + user32.GetSystemMetricsForDpi(92, dpi)
     except Exception:
         return 8
@@ -141,7 +141,7 @@ def is_zoomed(hwnd):
     """Native maximized state. During WM_NCCALCSIZE of a maximize the WS_MAXIMIZE style is
     already set while Qt's windowState() still says 'normal' (it updates on WM_SIZE)."""
     try:
-        return bool(user32.IsZoomed(int(hwnd))) if IS_WIN else False
+        return bool(user32.IsZoomed(int(hwnd or 0))) if IS_WIN else False
     except Exception:
         return False
 

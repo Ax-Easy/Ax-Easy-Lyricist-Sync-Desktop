@@ -61,6 +61,14 @@ jobs:
           Get-Content selftest.json
           if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
 
+      - name: If the self-test failed, run it from source with a console (Python traceback / faulthandler)
+        if: failure()
+        shell: pwsh
+        working-directory: app
+        run: |
+          python -X faulthandler -m lyricist_sync --selftest --report ..\selftest-src.json
+          Get-Content ..\selftest-src.json -ErrorAction SilentlyContinue
+
       - name: Self-test with --force-win10-style (painted glass + shadow margin, hit-tests on the visible edge)
         shell: pwsh
         run: |

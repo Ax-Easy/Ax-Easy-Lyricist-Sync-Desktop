@@ -571,8 +571,9 @@ class GlassWindow(QWidget, chrome.Frame):
                 return True, hit
         elif msg.message == winfx.WM_NCCALCSIZE and msg.wParam:
             # IsZoomed, not isMaximized(): Qt only learns about the new state on WM_SIZE, after this
-            if winfx.is_zoomed(int(self.winId())) and not self.isFullScreen():
-                winfx.fix_maximized_rect(msg, int(self.winId()))
+            # (msg.hWnd, never winId() here: this also runs inside CreateWindowEx, before Qt has the handle)
+            if winfx.is_zoomed(msg.hWnd) and not self.isFullScreen():
+                winfx.fix_maximized_rect(msg, msg.hWnd)
             return True, 0
         elif msg.message == winfx.WM_NCACTIVATE:
             return True, 1
