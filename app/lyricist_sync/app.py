@@ -87,6 +87,7 @@ class App:
             self.settings['dark'] = dark
         if self.settings['dark'] is None:
             self.settings['dark'] = thememod.system_is_dark()
+        thememod.apply_platform_style(qapp)
         qapp.setFont(thememod.ui_font())
         self.win = GlassWindow(self)
         self.win.load_settings(self.settings)

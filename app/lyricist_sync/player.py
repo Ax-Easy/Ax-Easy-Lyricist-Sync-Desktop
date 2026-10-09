@@ -78,6 +78,17 @@ def prune(keep=None, files=CACHE_FILES, max_bytes=CACHE_BYTES):
         pass
 
 
+def _qt_stop_hangs():
+    try:
+        from PySide6 import QtCore
+        return tuple(int(x) for x in QtCore.qVersion().split('.')[:2]) < (6, 8)
+    except Exception:
+        return sys.platform == 'darwin'
+
+
+_QT_STOP_HANGS = _qt_stop_hangs()
+
+
 class AudioCache(QObject):
     """load(path) -> ready(path, wav_path, peaks, duration) or failed(path, message).
     One decode at a time; selecting another song cancels the running one."""
@@ -150,9 +161,9 @@ class AudioCache(QObject):
                 d.finished.disconnect()
             except (RuntimeError, TypeError):
                 pass
-            if sys.platform == 'darwin':
-                # Qt 6.7 on macOS: QAudioDecoder.stop() while the FFmpeg backend is decoding never returns
-                # (seen in CI when another song is selected mid-decode). Let it run to the end unobserved
+            if _QT_STOP_HANGS:
+                # Qt 6.7 (the macOS build): QAudioDecoder.stop() while the FFmpeg backend is decoding never
+                # returns (seen when another song is selected mid-decode). Let it run to the end unobserved
                 # and delete it then; its output is ignored.
                 self._orphans = [o for o in getattr(self, '_orphans', []) if o is not None] + [d]
 
