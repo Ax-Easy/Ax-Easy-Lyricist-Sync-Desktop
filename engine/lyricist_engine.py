@@ -520,7 +520,8 @@ class Engine:
         t['total'] = time.time() - T0
         low = sum(1 for o in out if o.get('conf', 1) < TM.LOW_CONF)
         return {'lines': out, 'duration': round(an['duration'], 3), 'language': an['language'], 'repeats': repeats,
-                'device': self.device, 'stem': self.stem, 'low_conf': low, 'version': 2,
+                'device': self.device, 'stem': self.stem, 'low_conf': low, 'version': 3,
+                'vocals': vocal_regions(an['vad']),
                 'timings': {k: round(v, 2) for k, v in t.items()}, 'transcript': an['segments']}
 
     def resync(self, job, progress):
@@ -557,12 +558,19 @@ class Engine:
         seq = list(job.get('idx') or range(len(texts)))
         out = self._finish(occ, texts, seq, an, None, False)
         progress('align', 1.0)
-        return {'from': k0, 'lines': out[k0:], 'timings': {'total': round(time.time() - T0, 2)}}
+        return {'from': k0, 'lines': out[k0:], 'vocals': vocal_regions(an['vad']),
+                'timings': {'total': round(time.time() - T0, 2)}}
 
     def _vocab(self):
         import torchaudio
         v = torchaudio.pipelines.MMS_FA.get_dict(star='*')
         return v, v['*']
+
+
+def vocal_regions(vad):
+    """Where the vocals stem is active, [[start, end], ...] in seconds. The app uses it to place
+    instrumental (♪) lines; they are never part of the alignment."""
+    return [[round(float(a), 2), round(float(b), 2)] for a, b in vad.regions()]
 
 
 def platform_cpu():

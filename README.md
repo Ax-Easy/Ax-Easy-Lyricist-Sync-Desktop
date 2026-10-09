@@ -52,6 +52,36 @@ more than 1 s. On the synthesized demo songs in `tests/fixtures`, every line was
      choirs and backing vocals.
    - **⟲ Re-sync from here**: fix one line by hand, then re-align only the lines after it. Earlier lines are kept.
      It takes a few seconds, because the song analysis is cached.
+   - **Player** (below the song list and above the line list):
+     - The **waveform** of the selected song shows a marker at every line start, violet **♪** regions, amber
+       markers on lines to check, and the playhead. Click to seek, use the wheel to zoom (Shift+wheel scrolls),
+       double-click to see the whole song, and drag a line marker to move that line.
+     - Transport: **▶ / ❚❚**, **−2 s / +2 s**, speed **0.5×–1.5×**, the time, and **▶ Play from line**. The line
+       playing now is highlighted and the list follows it.
+     - The song is decoded once to PCM for exact seeking and cached (the last 8 songs) in
+       `%LOCALAPPDATA%\Ax-Easy\LyricistSync\cache\audio`.
+   - **Keyboard** (not while you type in a text box):
+
+     | Key | Action |
+     |---|---|
+     | Space | play / pause |
+     | ↑ / ↓ | select the previous / next line (in the song list they move between songs) |
+     | ← / → | nudge the selected line by 0.1 s; with Shift by 0.01 s |
+     | S | stamp: the selected line starts at the playhead, and the next line is selected |
+     | Delete | remove the selected ♪ line |
+     | F11 | full screen (Esc leaves it) |
+   - **♪ in instrumental parts**: when nothing is sung for longer than a threshold, a **♪** line is added, so a
+     lyric display shows ♪ instead of the last sung line during intros, solos, breaks and the outro.
+     - A gap is measured from where the previous line's singing really stops (the end of its vocal activity on
+       the vocal stem, a held note at most 3 s) to the next line. The previous line ends there, and the ♪ line
+       ends 0.3 s before the next line.
+     - Hums, ad-libs and backing "ohh"s in the gap don't stop the ♪: it marks the part with no lyric line.
+     - **♪ …** sets it up: on/off, the shortest gap (default **8 s**, 3–30 s), the symbol (**♪**, **♪♪**,
+       **♫** or **♪ instrumental ♪**) and whether the intro and outro get one.
+     - **+ ♪** (or right-click → *Insert ♪ here*) adds one at the playhead. **Delete** or right-click removes
+       one, and it stays removed.
+     - ♪ lines are in every format (LRC `[mm:ss.xx]♪`; SRT, VTT and TTML as normal cues) and are never sent to the
+       aligner.
 4. **Export**:
    - **Save to**: *Next to the audio file* (the default), *A chosen folder* or *Ask every time*.
    - **Per song**: the queue has an **Output folder** column, and **Change…** sets a folder for one song. To set
@@ -91,7 +121,7 @@ CI writes `update.json` next to the installer, with the real SHA256 and size (`t
 fields are:
 
 ```json
-{"version": "1.1.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.1.0.exe",
+{"version": "1.2.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.2.0.exe",
  "sha256": "…", "size": 52000000, "minimum_os": "10.0.17763"}
 ```
 
@@ -121,7 +151,7 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Setup-1.1.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Setup-1.2.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`. Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:

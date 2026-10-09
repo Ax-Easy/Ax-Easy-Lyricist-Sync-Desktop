@@ -52,7 +52,8 @@ def export_song(song, options, on_conflict=None):
             return []
         if decision == 'keep':
             base = keep_both_base(out_dir, base, formats)
-    lines = [{'text': l['text'], 'time': l['start'], 'end': l['end'] + 0.4} for l in song.result['lines']]
+    # sung lines linger 0.4 s (cut at the next line); ♪ lines end where they end
+    lines = [{'text': l['text'], 'time': l['start'], 'end': l['end'] + (0 if l.get('inst') else 0.4)} for l in song.result['lines']]
     m = {'ti': info['title'], 'ar': info['artist'], 'al': song.tags.get('album', ''), 'lang': song.iso}
     written = []
     for fmt in formats:

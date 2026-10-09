@@ -137,15 +137,82 @@ def read_msg(message):
     return wintypes.MSG.from_address(int(message))
 
 
+def is_zoomed(hwnd):
+    """Native maximized state. During WM_NCCALCSIZE of a maximize the WS_MAXIMIZE style is
+    already set while Qt's windowState() still says 'normal' (it updates on WM_SIZE)."""
+    try:
+        return bool(user32.IsZoomed(int(hwnd))) if IS_WIN else False
+    except Exception:
+        return False
+
+
+if IS_WIN:
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT),
+                    ('dwFlags', wintypes.DWORD)]
+    user32.MonitorFromRect.restype = ctypes.c_void_p
+    user32.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
+    user32.MonitorFromWindow.restype = ctypes.c_void_p
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+
+
+def work_area(rect=None, hwnd=None):
+    """(left, top, right, bottom) of the monitor work area (screen minus taskbar) for a RECT
+    or a window; None when unknown."""
+    try:
+        mon = user32.MonitorFromRect(ctypes.byref(rect), 2) if rect is not None else user32.MonitorFromWindow(int(hwnd), 2)
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if not mon or not user32.GetMonitorInfoW(mon, ctypes.byref(mi)):
+            return None
+        w = mi.rcWork
+        return w.left, w.top, w.right, w.bottom
+    except Exception:
+        return None
+
+
 def fix_maximized_rect(msg, hwnd):
-    """WM_NCCALCSIZE while maximized: keep the client area inside the monitor."""
+    """WM_NCCALCSIZE while maximized: the client area is exactly the work area of the monitor
+    the window is maximized on (not the screen behind the taskbar, and not the window rect
+    that Windows pushes past the monitor edges by the invisible frame)."""
     p = NCCALCSIZE_PARAMS.from_address(msg.lParam)
-    t = frame_thickness(hwnd)
     r = p.rgrc[0]
-    r.left += t
-    r.top += t
-    r.right -= t
-    r.bottom -= t
+    wa = work_area(rect=r)
+    if wa is None:   # fall back to trimming the frame
+        t = frame_thickness(hwnd)
+        r.left += t
+        r.top += t
+        r.right -= t
+        r.bottom -= t
+        return
+    l, t, rr, b = wa
+    r.left, r.top = max(r.left, l), max(r.top, t)
+    r.right, r.bottom = min(r.right, rr), min(r.bottom, b)
+
+
+def native_rects(hwnd):
+    """Diagnostics: window and client rects (screen coordinates) and the zoomed state."""
+    if not IS_WIN:
+        return {}
+    try:
+        w, c = wintypes.RECT(), wintypes.RECT()
+        user32.GetWindowRect(int(hwnd), ctypes.byref(w))
+        user32.GetClientRect(int(hwnd), ctypes.byref(c))
+        pt = wintypes.POINT(0, 0)
+        user32.ClientToScreen(int(hwnd), ctypes.byref(pt))
+        return {'window': [w.left, w.top, w.right, w.bottom], 'client': [pt.x, pt.y, pt.x + c.right, pt.y + c.bottom],
+                'zoomed': is_zoomed(hwnd), 'work': list(work_area(hwnd=hwnd) or [])}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def show_window(hwnd, cmd):
+    """ShowWindow: 3 maximize (what Win+Up / snap-to-top do), 9 restore."""
+    try:
+        return bool(user32.ShowWindow(int(hwnd), cmd)) if IS_WIN else False
+    except Exception:
+        return False
 
 
 def apps_use_dark():

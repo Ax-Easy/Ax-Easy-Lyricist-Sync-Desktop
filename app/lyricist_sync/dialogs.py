@@ -537,6 +537,59 @@ class ConflictDialog(GlassDialog):
         super().reject()
 
 
+class MusicDialog(GlassDialog):
+    """♪ lines in instrumental parts: on/off, shortest gap, symbol, intro/outro."""
+
+    def __init__(self, parent, settings):
+        from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel
+        from . import instrumental as I
+        super().__init__(parent, '♪ in instrumental parts', 520, 330)
+        st = I.settings_of(settings)
+        self.lay.addWidget(link_label('When nothing is sung for a while (intro, solo, break, outro), a ♪ line is shown '
+                                      'instead of the last sung line. It is in every exported format.', 'plain'))
+        self.on = QCheckBox('Add ♪ lines automatically')
+        self.on.setChecked(bool(st['inst_on']))
+        self.lay.addWidget(self.on)
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Shortest instrumental part'))
+        self.gap = QDoubleSpinBox()
+        self.gap.setRange(I.GAP_MIN, I.GAP_MAX)
+        self.gap.setSingleStep(0.5)
+        self.gap.setDecimals(1)
+        self.gap.setSuffix(' s')
+        self.gap.setValue(float(st['inst_gap']))
+        row.addWidget(self.gap)
+        row.addStretch(1)
+        self.lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Symbol'))
+        self.symbol = QComboBox()
+        for sym in I.SYMBOLS:
+            self.symbol.addItem(sym, sym)
+        self.symbol.setCurrentIndex(max(0, self.symbol.findData(st['inst_symbol'])))
+        row.addWidget(self.symbol)
+        row.addStretch(1)
+        self.lay.addLayout(row)
+        self.edges = QCheckBox('Also before the first line (intro) and after the last one (outro)')
+        self.edges.setChecked(bool(st['inst_edges']))
+        self.lay.addWidget(self.edges)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = PillButton('Cancel')
+        cancel.clicked.connect(self.reject)
+        ok = PillButton('Apply', 'primary')
+        ok.clicked.connect(self.accept)
+        for b in (cancel, ok):
+            b.setMinimumWidth(96)
+            row.addWidget(b)
+        self.lay.addLayout(row)
+
+    def values(self):
+        return {'inst_on': self.on.isChecked(), 'inst_gap': round(self.gap.value(), 1),
+                'inst_symbol': self.symbol.currentData(), 'inst_edges': self.edges.isChecked()}
+
+
 class _UpdBridge(QObject):
     checked = Signal(object)
     progress = Signal(float, float, float)

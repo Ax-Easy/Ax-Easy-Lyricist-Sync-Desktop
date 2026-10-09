@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.2.0 (2026-10-09)
+
+### ♪ in instrumental parts
+- When nothing is sung for longer than a threshold, a **♪** line is added: in the intro before the first line,
+  in solos and breaks, and (optionally) in the outro. A lyric display then shows ♪ instead of the last sung line.
+- The gap is found from the vocal activity on the separated vocals plus the line timings. The line before the gap
+  ends where its singing really stops, and the ♪ ends 0.3 s before the next line.
+- Settings (**♪ …**): on/off, shortest gap (default 8 s, 3–30 s), symbol (♪, ♪♪, ♫ or "♪ instrumental ♪"),
+  intro and outro.
+- In the line list ♪ lines are violet and italic. Delete one with the Delete key or the right-click menu, or
+  add one at the playhead with **+ ♪** (*Insert ♪ here*).
+- ♪ lines are in every format (LRC `[mm:ss.xx]♪`; SRT, VTT and TTML as normal cues). They are never sent to the
+  aligner, and Re-sync from here skips them.
+
+### Built-in player
+- A waveform under the song list: line start markers, ♪ regions, amber markers on lines to check, and the
+  playhead. Click to seek, wheel to zoom, drag a marker to move a line.
+- Transport above the line list: play/pause, ±2 s, speed 0.5×–1.5×, time, Play from line. The line playing now
+  is highlighted and the list follows it.
+- Keyboard: Space play/pause, ↑/↓ select a line, ←/→ nudge 0.1 s (Shift: 0.01 s), S stamps the selected line
+  at the playhead.
+- Each song is decoded once to PCM, so seeking is exact, and cached together with its waveform.
+
+### Window
+- Maximize fills the screen's work area (the taskbar stays visible), with no shadow margin or rounded
+  corners, and restores the previous size. All panels stretch with the window.
+- Double-click the title bar to maximize or restore. **F11** toggles full screen. Win+↑/↓ and snap keep working.
+- The lyrics box adapts to the window height, so the line list gets more room on 720p screens.
+
 ## 1.1.0 (2026-10-09)
 
 ### Timing

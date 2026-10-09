@@ -87,6 +87,7 @@ def run(report_path=None):
         return {'ttml_bytes': len(ttml.encode('utf-8'))}
     check('exporters', exporters)
 
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
     qapp = QApplication.instance() or QApplication([sys.argv[0]])
     ctx = {}
@@ -372,6 +373,165 @@ def run(report_path=None):
         assert out['thickframe'] and out['maximizebox']
         return out
     check('native_frame', native)
+
+    def pump(sec, until=None):
+        import time as _t
+        t = _t.time()
+        while _t.time() - t < sec and not (until and until()):
+            qapp.processEvents()
+            _t.sleep(0.002)
+
+    def music_lines():
+        from . import instrumental
+        from .formats import fmt_lrc_time
+        app, win = ctx['app'], ctx['app'].win
+        s = app.current()
+        texts = ['Καλησπέρα κόσμε', 'Ο ήλιος ανατέλλει πάλι 🌅', 'Tom & Jerry <live> "x"', 'Καλησπέρα κόσμε']
+        s.result = {'lines': [{'idx': i % 3, 'text': t, 'start': st, 'end': en, 'conf': 0.9}
+                              for i, (t, st, en) in enumerate(zip(texts, (10.0, 13.0, 30.0, 33.0), (12.5, 15.0, 32.0, 35.0)))],
+                    'duration': 50.0, 'vocals': [[9.9, 15.6], [29.9, 35.1]], 'language': 'el', 'repeats': []}
+        instrumental.apply(s.result, app.settings)
+        win.show_song(s)
+        kinds = [l.get('kind') for l in s.result['lines'] if l.get('inst')]
+        assert kinds == ['intro', 'break', 'outro'], kinds
+        rows = [r for r in range(win.review.rowCount()) if win.review.item(r, 1).data(Qt.UserRole + 1) == 'inst']
+        assert rows == [0, 3, 6], rows
+        assert win.review.item(3, 4).text() == 'music' and win.review.item(3, 1).font().italic()
+        assert fmt_lrc_time(s.result['lines'][2]['end']) == '00:15.60'   # previous line ends where the gap starts
+        win.review.selectRow(3)
+        assert not win.btn_resync.isEnabled()                       # ♪ lines are never aligned
+        jobs = []
+
+        class FakeEngine:
+            def submit(self, job):
+                jobs.append(job)
+        app.ensure_engine = lambda: True
+        real_engine, app.engine = app.engine, FakeEngine()
+        app.resync(s, 4)                                            # row 4 = 3rd sung line
+        app.engine = real_engine
+        assert jobs and jobs[0]['from'] == 2 and '♪' not in jobs[0]['lines'] and len(jobs[0]['lines']) == 4, jobs
+        app.busy = False
+        app.queue = []
+        win.review.selectRow(0)
+        assert win.handle_key(Qt.Key_Delete)                        # delete the intro ♪
+        assert win.review.rowCount() == 6 and s.result.get('inst_deleted') == ['intro']
+        win.wave.pos = 20.0
+        win._insert_inst()                                           # "Insert ♪ here" at the playhead
+        ins = [l for l in s.result['lines'] if l.get('inst') and not l.get('auto')]
+        assert len(ins) == 1 and ins[0]['start'] == 20.0 and abs(ins[0]['end'] - 29.7) < 1e-6, ins
+        real_ask, win.ask_conflict = win.ask_conflict, lambda *a: 'overwrite'
+        try:
+            files = app.export_current()
+        finally:
+            win.ask_conflict = real_ask
+        lrc = [f for f in files if f.endswith('.lrc')][0]
+        with open(lrc, encoding='utf-8-sig') as f:
+            text = f.read()
+        # the manual ♪ replaces the automatic one of the same gap; the outro stays
+        assert '[00:20.00]♪' in text and '[00:35.10]♪' in text and '[00:15.60]♪' not in text, text
+        srt = [f for f in files if f.endswith('.srt')][0]
+        with open(srt, encoding='utf-8-sig') as f:
+            assert '00:00:20,000 --> 00:00:29,700\n♪' in f.read()
+        return {'kinds': kinds, 'lrc': [l for l in text.splitlines() if '♪' in l]}
+    check('music_lines', music_lines)
+
+    def player():
+        from . import player as P
+        win = ctx['app'].win
+        s = ctx['app'].current()
+        win._load_audio(s)
+        pump(15, lambda: win.wave.duration > 0)
+        assert abs(win.wave.duration - 2.0) < 0.05, ('decode', win.wave.duration, win.wave.message)
+        hit = win.audio.get(s.path)
+        assert hit and os.path.exists(hit[0]) and abs(len(hit[1]) / 2 * P.HOP - 2.0) < 0.05, hit and len(hit[1])
+        assert os.path.dirname(hit[0]) == P.cache_dir()
+        out = {'decoded_s': round(win.wave.duration, 3), 'peaks': len(hit[1]) // 2, 'cache': hit[0]}
+        win._seek(1.25)
+        pump(3, lambda: win.player.mediaStatus() in (win.player.MediaStatus.LoadedMedia, win.player.MediaStatus.BufferedMedia))
+        pump(0.3)
+        out['source'] = os.path.basename(win._src)
+        out['player_pos_ms'] = win.player.position()
+        assert win._src == hit[0], win._src
+        assert abs(win.position() - 1.25) < 1e-6
+        if qapp.platformName() == 'windows' and win.player.isAvailable():
+            assert abs(win.player.position() - 1250) <= 30, win.player.position()
+        assert win.time_lbl.text().startswith('0:01.25'), win.time_lbl.text()
+        win.review.selectRow(1)
+        before = s.result['lines'][1]['start']
+        assert win.handle_key(Qt.Key_Right) and abs(s.result['lines'][1]['start'] - before - 0.1) < 1e-6
+        assert win.handle_key(Qt.Key_Left, Qt.ShiftModifier) and abs(s.result['lines'][1]['start'] - before - 0.09) < 1e-6
+        assert win.handle_key(Qt.Key_Down) and win.review.currentRow() == 2
+        assert win.handle_key(Qt.Key_S) and s.result['lines'][2]['start'] == 1.25 and win.review.currentRow() == 3
+        win.lyrics.setFocus()
+        qapp.processEvents()
+        out['typing_guard'] = win._typing() if QApplication.focusWidget() is win.lyrics else 'focus n/a'
+        win._set_active(1.3, True)
+        assert win.review._active_row == 2, win.review._active_row
+        win.wave.zoom(0.4, 1.0)
+        assert 0 < win.wave.span < 2.0, win.wave.span
+        win.toggle_play()
+        pump(0.5)
+        out['play_state'] = str(win.player.playbackState()).split('.')[-1]
+        win.player.stop()
+        return out
+    check('player', player)
+
+    def maximize():
+        from . import winfx
+        win = ctx['app'].win
+        win.showNormal()
+        pump(0.3)
+        normal = win.geometry()
+        sizes = lambda: {'review': (win.review.width(), win.review.height()), 'queue': (win.queue.width(), win.queue.height()),
+                         'wave': (win.wave.width(), win.wave.height())}
+        n_sizes = sizes()
+        out = {'normal': normal.getRect(), 'avail': win.screen().availableGeometry().getRect(),
+               'screen': win.screen().geometry().getRect(), 'platform': qapp.platformName()}
+
+        def check_fill(tag, want):
+            g = win.geometry()
+            out[tag] = g.getRect()
+            if winfx.IS_WIN:
+                out[tag + '_native'] = winfx.native_rects(int(win.winId()))
+            assert win.margin() == 0 and win.radius() == 0, (tag, win.margin(), win.radius())
+            assert all(abs(a - b) <= 2 for a, b in zip(g.getRect(), want.getRect())), (tag, g.getRect(), want.getRect())
+            sz = sizes()
+            out[tag + '_sizes'] = sz
+            if want.width() > normal.width() + 40 and want.height() > normal.height() + 40:
+                for k in sz:   # everything stretched, nothing left at its old size
+                    assert sz[k][0] > n_sizes[k][0] and sz[k][1] >= n_sizes[k][1], (tag, k, sz[k], n_sizes[k])
+
+        win._toggle_max()
+        pump(1.0, lambda: win.isMaximized() and win.geometry() == win.screen().availableGeometry())
+        pump(0.2)
+        assert win.isMaximized()
+        check_fill('maximized', win.screen().availableGeometry())
+        win._toggle_max()
+        pump(1.0, lambda: not win.isMaximized() and win.geometry() == normal)
+        out['restored'] = win.geometry().getRect()
+        assert all(abs(a - b) <= 2 for a, b in zip(win.geometry().getRect(), normal.getRect())), (out['restored'], normal.getRect())
+        if winfx.IS_WIN and qapp.platformName() == 'windows':
+            winfx.show_window(int(win.winId()), 3)      # SW_MAXIMIZE: what Win+Up and snap-to-top do
+            pump(1.0, lambda: win.isMaximized() and win.geometry() == win.screen().availableGeometry())
+            pump(0.2)
+            assert win.isMaximized()
+            check_fill('native_maximized', win.screen().availableGeometry())
+            winfx.show_window(int(win.winId()), 9)      # SW_RESTORE (Win+Down)
+            pump(1.0, lambda: not win.isMaximized() and win.geometry() == normal)
+            out['native_restored'] = win.geometry().getRect()
+            assert all(abs(a - b) <= 2 for a, b in zip(win.geometry().getRect(), normal.getRect())), out['native_restored']
+        win._toggle_full()
+        pump(1.0, lambda: win.isFullScreen() and win.geometry() == win.screen().geometry())
+        pump(0.2)
+        assert win.isFullScreen()
+        check_fill('fullscreen', win.screen().geometry())
+        win._toggle_full()
+        pump(1.0, lambda: not win.isFullScreen() and win.geometry() == normal)
+        out['after_fullscreen'] = win.geometry().getRect()
+        assert not win.isFullScreen() and not win.isMaximized()
+        out['healed'] = getattr(win, '_healed', 0)
+        return out
+    check('maximize', maximize)
 
     ok = all(c['ok'] for c in checks)
     rep = {'version': VERSION, 'ok': ok, 'frozen': bool(getattr(sys, 'frozen', False)), 'checks': checks}

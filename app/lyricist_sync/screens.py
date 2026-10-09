@@ -111,6 +111,143 @@ def _save(img, path):
     print('saved', path, flush=True)
 
 
+def _pump(sec, until=None):
+    import time
+    qapp = QApplication.instance()
+    t = time.time()
+    while time.time() - t < sec and not (until and until()):
+        qapp.processEvents()
+        time.sleep(0.002)
+
+
+def _wait_audio(win):
+    """The waveform is decoded asynchronously; wait for it before a screenshot."""
+    _pump(20, lambda: win.wave.duration > 0 or win.wave.message.startswith('Waveform not'))
+    _pump(0.05)
+
+
+def _load_result(app, s, rp):
+    from . import instrumental
+    with open(rp, encoding='utf-8') as f:
+        s.result = json.load(f)
+    instrumental.apply(s.result, app.settings)
+    reps = len(s.result.get('repeats') or [])
+    low = sum(1 for l in s.result['lines'] if (l.get('conf') if l.get('conf') is not None else 1) < 0.6)
+    s.status = 'Synced' + (' · %d repeat%s' % (reps, 's' if reps > 1 else '') if reps else '') + \
+        (' · %d to check' % low if low else '')
+
+
+def _show_at(win, row, t):
+    """Select `row`, playhead at t (paused), the line playing at t highlighted."""
+    win.review.selectRow(row)
+    win._show_position(t, playing=True)
+    win.wave.set_selected(row)
+
+
+def _music(app, win, dark, fixture_dir, label, out_dir, name):
+    """♪ lines (intro_long fixture: a long instrumental intro, real 1.1.0 engine result + vocal
+    regions) and the player panel."""
+    hard = os.path.join(fixture_dir, '..', 'hard')
+    audio, rp = os.path.join(hard, 'intro_long.mp3'), os.path.join(hard, 'intro_long.result.json')
+    if not (os.path.exists(audio) and os.path.exists(rp)):
+        return
+    app.add_songs([audio])
+    s = app.songs[-1]
+    _load_result(app, s, rp)
+    app.cur = len(app.songs) - 1
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(s)
+    _wait_audio(win)
+    win.set_busy(False, '', 1.0)
+    win.status_lbl.setText('')
+    _show_at(win, 0, 18.4)
+    _save(compose_labeled(win, dark, label + ' · ♪ line in the instrumental intro (intro_long fixture, gap ≥ 8 s, '
+                                           'violet in the list and on the waveform)'),
+          os.path.join(out_dir, '%s_10_music_lines.png' % name))
+    win.wave.t0, win.wave.span = 28.0, 18.0
+    win.wave._cache = None
+    _show_at(win, 2, 36.2)
+    win.btn_pp.setText('❚❚')
+    win.speed.setCurrentIndex(1)
+    _save(compose_labeled(win, dark, label + ' · player: waveform zoomed (wheel), line markers, playhead, '
+                                           'the line playing now highlighted, speed 0.75×'),
+          os.path.join(out_dir, '%s_11_player.png' % name))
+    win.btn_pp.setText('▶')
+    win.speed.setCurrentIndex(2)
+
+
+def render_maximized(out_dir, fixture_dir=None):
+    """Maximized window, dark and light, on offscreen screens of 1280×720, 1920×1080 and
+    2560×1440 (one process: three virtual screens side by side). Offscreen screens have no
+    taskbar, so the work area is the whole screen here."""
+    sizes = ((1280, 720), (1920, 1080), (2560, 1440))
+    cfg = os.path.join(tempfile.mkdtemp(prefix='lsync-scr-'), 'screens.json')
+    x = 0
+    scr = []
+    for w, h in sizes:
+        scr.append({'name': '%dx%d' % (w, h), 'x': x, 'y': 0, 'width': w, 'height': h, 'logicalDpi': 96, 'logicalBaseDpi': 96, 'dpr': 1})
+        x += w
+    with open(cfg, 'w') as f:
+        json.dump({'screens': scr}, f)
+    if QApplication.instance() is None:
+        os.environ['QT_QPA_PLATFORM'] = 'offscreen:configfile=' + cfg.replace('\\', '/')
+    os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
+    os.makedirs(out_dir, exist_ok=True)
+    from PySide6.QtCore import QPoint as _P
+    from .app import App
+    from . import theme as thememod
+    qapp = QApplication.instance() or QApplication(['LyricistSync'])
+    qapp.setFont(thememod.ui_font())
+    fixture_dir = fixture_dir or os.path.join(os.path.dirname(__file__), '..', '..', 'tests', 'fixtures')
+    hard = os.path.join(fixture_dir, '..', 'hard')
+    report = []
+    for dark in (True, False):
+        app = App(qapp, screenshot=True, dark=dark)
+        win = app.win
+        win.resize(1160 + 2 * win.margin(), 780 + 2 * win.margin())
+        win.show()
+        audios = sorted(glob.glob(os.path.join(fixture_dir, 'demo_*.mp3'))) + \
+            [os.path.join(hard, n + '.mp3') for n in ('intro_long', 'choir') if os.path.exists(os.path.join(hard, n + '.mp3'))]
+        app.add_songs(audios)
+        for s in app.songs:
+            for rp in (os.path.splitext(s.path)[0] + '.result.json',):
+                if os.path.exists(rp):
+                    _load_result(app, s, rp)
+        win.set_device({'text': 'Engine ready'})
+        cur = next((k for k, s in enumerate(app.songs) if s.path.endswith('intro_long.mp3')), 0)
+        app.cur = cur
+        win.refresh_queue(app.songs, cur)
+        win.show_song(app.current())
+        _wait_audio(win)
+        for screen in sorted(qapp.screens(), key=lambda s: s.geometry().width()):
+            win.showNormal()
+            _pump(0.1)
+            win.setScreen(screen)
+            win.move(screen.geometry().topLeft() + _P(40, 40))
+            _pump(0.1)
+            win._toggle_max()
+            _pump(1.0, lambda: win.isMaximized() and win.geometry() == screen.availableGeometry())
+            _pump(0.1)
+            _show_at(win, 1, 33.0)
+            g, a = win.geometry(), screen.availableGeometry()
+            ok = win.isMaximized() and g == a and win.margin() == 0 and win.radius() == 0
+            report.append({'theme': 'dark' if dark else 'light', 'screen': screen.name(), 'window': g.getRect(),
+                           'work_area': a.getRect(), 'review': [win.review.width(), win.review.height()],
+                           'queue': [win.queue.width(), win.queue.height()], 'waveform': [win.wave.width(), win.wave.height()],
+                           'ok': ok})
+            _save(compose_labeled(win, dark, 'Maximized on a %s screen · offscreen render (no taskbar offscreen: work area = '
+                                             'screen) · window %dx%d, no shadow margin or rounded corners'
+                                  % (screen.name().replace('x', '×'), g.width(), g.height())),
+                  os.path.join(out_dir, 'maximized_%s_%s.png' % ('dark' if dark else 'light', screen.name())))
+            win._toggle_max()
+            _pump(0.3)
+        win.close()
+    with open(os.path.join(out_dir, 'maximized.json'), 'w') as f:
+        json.dump(report, f, indent=1)
+    print(json.dumps(report, indent=1))
+    return 0 if all(r['ok'] for r in report) else 1
+
+
 def _choir(app, win, dark, fixture_dir, label, out_dir, name):
     """Review list of the choir fixture with its real 1.1.0 engine result (amber 'check' markers)."""
     hard = os.path.join(fixture_dir, '..', 'hard')
@@ -119,13 +256,11 @@ def _choir(app, win, dark, fixture_dir, label, out_dir, name):
         return
     app.add_songs([audio])
     s = app.songs[-1]
-    with open(rp, encoding='utf-8') as f:
-        s.result = json.load(f)
-    low = s.result.get('low_conf') or 0
-    s.status = 'Synced' + (' · %d to check' % low if low else '')
+    _load_result(app, s, rp)
     app.cur = len(app.songs) - 1
     win.refresh_queue(app.songs, app.cur)
     win.show_song(s)
+    _wait_audio(win)
     k = next((i for i, l in enumerate(s.result['lines']) if (l.get('conf') or 1) < 0.6), 0)
     win.review.selectRow(k)
     win.set_busy(False, '', 1.0)
@@ -172,12 +307,7 @@ def render(out_dir, fixture_dir=None):
             for s in app.songs:
                 rp = os.path.splitext(s.path)[0] + '.result.json'
                 if os.path.exists(rp):
-                    with open(rp, encoding='utf-8') as f:
-                        s.result = json.load(f)
-                    reps = len(s.result.get('repeats') or [])
-                    low = sum(1 for l in s.result['lines'] if (l.get('conf') if l.get('conf') is not None else 1) < 0.6)
-                    s.status = 'Synced' + (' · %d repeat%s' % (reps, 's' if reps > 1 else '') if reps else '') + \
-                        (' · %d to check' % low if low else '')
+                    _load_result(app, s, rp)
                     info = {'device': s.result.get('device'), 'device_name': s.result.get('device_name', '')}
             en = next((k for k, s in enumerate(app.songs) if s.path.endswith('demo_en.mp3')), 0)
             if len(app.songs) > 1:
@@ -188,7 +318,8 @@ def render(out_dir, fixture_dir=None):
             app.cur = en
             win.refresh_queue(app.songs, en)
             win.show_song(app.current())
-            win.review.selectRow(3)
+            _wait_audio(win)
+            _show_at(win, 3, app.current().result['lines'][4]['start'] + 0.6)
             win.set_busy(False, 'Ax-Easy Δοκιμή – Ήλιος · Aligning lines 72%', 0.94)
             if info:
                 win.set_device(info)
@@ -242,6 +373,7 @@ def render(out_dir, fixture_dir=None):
                 c.close()
             if style == 'win10':
                 _choir(app, win, dark, fixture_dir, label, out_dir, name)
+                _music(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     chrome.force_win10(forced)
     return 0
