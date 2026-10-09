@@ -87,6 +87,7 @@ def _qt_stop_hangs():
 
 
 _QT_STOP_HANGS = _qt_stop_hangs()
+_AFCONVERT = '/usr/bin/afconvert' if sys.platform == 'darwin' and os.path.exists('/usr/bin/afconvert') else None
 
 
 class AudioCache(QObject):
@@ -95,9 +96,12 @@ class AudioCache(QObject):
     ready = Signal(str, str, object, float)
     failed = Signal(str, str)
     _done = Signal(str, str, object, float, str)
+    _fallback = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._af = set()   # macOS: paths being converted by afconvert
+        self._fallback.connect(self._start_qt)
         self._dec = None
         self._path = None
         self._chunks = []
@@ -134,6 +138,50 @@ class AudioCache(QObject):
         self._start(path)
 
     def _start(self, path):
+        if _AFCONVERT and os.path.splitext(path)[1].lower() not in ('.ogg', '.oga', '.opus'):
+            # macOS: Core Audio's afconvert decodes MP3/AAC/M4A/WAV/AIFF/FLAC reliably and fast; Qt 6.7's
+            # QAudioDecoder never finished MP3s on the macOS CI runners. Falls back to Qt if it fails.
+            self.cancel()
+            if path not in self._af:
+                self._af.add(path)
+                threading.Thread(target=self._afconvert, args=(path,), daemon=True).start()
+            return
+        self._start_qt(path)
+
+    def _afconvert(self, path):
+        import subprocess
+        base = os.path.join(cache_dir(), cache_key(path))
+        tmp = base + '.af.wav'
+        try:
+            r = subprocess.run([_AFCONVERT, '-f', 'WAVE', '-d', 'LEI16@44100', '-c', '2', path, tmp],
+                               capture_output=True, timeout=600)
+            if r.returncode != 0 or not os.path.exists(tmp):
+                raise RuntimeError((r.stderr or b'').decode('utf-8', 'replace').strip()[:200] or 'afconvert failed')
+            with wave.open(tmp, 'rb') as w:
+                ch, sr, sw = w.getnchannels(), w.getframerate(), w.getsampwidth()
+                raw = w.readframes(w.getnframes())
+            if sw != 2:
+                raise RuntimeError('unexpected sample width %d' % sw)
+            pcm = array.array('h')
+            pcm.frombytes(raw[:len(raw) // 2 * 2])
+            if sys.byteorder != 'little':
+                pcm.byteswap()
+            peaks = compute_peaks(pcm, ch, sr)
+            os.replace(tmp, base + '.wav')
+            with open(base + '.peaks', 'wb') as f:
+                peaks.tofile(f)
+            prune(keep=cache_key(path))
+            self._af.discard(path)
+            self._done.emit(path, base + '.wav', peaks, len(pcm) / float(ch * sr), '')
+        except Exception:  # noqa: BLE001
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            self._af.discard(path)
+            self._fallback.emit(path)
+
+    def _start_qt(self, path):
         from PySide6.QtMultimedia import QAudioDecoder, QAudioFormat
         if self._dec is not None:
             if self._path == path:
