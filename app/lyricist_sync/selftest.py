@@ -50,6 +50,8 @@ def run(report_path=None):
     def packaging():
         eng = paths.engine_script()
         assert os.path.isfile(eng), eng
+        for f in ('timing.py',):  # modules the engine imports from its own folder
+            assert os.path.isfile(os.path.join(os.path.dirname(eng), f)), 'engine/%s not packaged' % f
         out = {'engine': eng}
         if getattr(sys, 'frozen', False):
             for w in bootstrap.manifest()['local_wheels']:

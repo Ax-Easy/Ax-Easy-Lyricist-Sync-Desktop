@@ -34,6 +34,14 @@ class TestDownload(unittest.TestCase):
         self.assertGreater(bootstrap.total_size('cuda'), 4.4e9)
         self.assertLess(bootstrap.total_size('cpu'), 2.3e9)
 
+    def test_model_steps(self):
+        """Each model download step gets exactly its own model, also with Windows paths."""
+        from lyricist_sync import bootstrap
+        for sep in ('/', '\\'):
+            items = [dict(m, dest='C:' + sep + sep.join(['home'] + m['dest'].split('/'))) for m in bootstrap.manifest()['models']]
+            groups = sorted(bootstrap.model_group(m) for m in items)
+            self.assertEqual(groups, ['demucs', 'mms', 'whisper'], sep)
+
 
 if __name__ == '__main__':
     unittest.main()

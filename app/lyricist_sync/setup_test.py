@@ -67,6 +67,10 @@ def run_setup_gui(variant, auto, report, shots):
         return dlg.exec()
     dlg.STALL = float(os.environ.get('LYRICIST_SYNC_STALL', '60'))
     dlg.show()
+    t_show = time.time()
+    while time.time() - t_show < 1.5:  # first paint/layout happens before anyone could click Start
+        qapp.processEvents()
+        time.sleep(0.01)
     dlg.start()
     info = {'shots': [], 'heartbeat_seen': [], 'variant': dlg.setup.variant, 'path': chrome.label()}
     t0 = time.time()
@@ -115,7 +119,7 @@ def run_setup_gui(variant, auto, report, shots):
     ok = dlg.done_state is not None
     worst = max(dlg.latency.values()) if dlg.latency else 0
     rep = dict(info, ok=ok, error=dlg.error, seconds=round(time.time() - t0, 1), latency_ms=dlg.latency,
-               max_latency_ms=worst, latency_ok=worst < 200,
+               max_latency_ms=worst, latency_ok=worst < 200, latency_spikes=dlg.lat_spikes,
                steps={k: {'status': v['status'], 'seconds': round((v['t1'] or time.time()) - v['t0'], 1) if v['t0'] else 0,
                           'detail': v['detail']} for k, v in steps.items()})
     if report:

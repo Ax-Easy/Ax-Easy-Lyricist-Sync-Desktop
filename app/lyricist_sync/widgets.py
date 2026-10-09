@@ -201,14 +201,16 @@ class GlassProgress(QWidget):
         if on:
             self._anim = QTimer(self)
             self._anim.timeout.connect(self._tick)
-            self._anim.start(33)
+            # 10 fps: on a translucent (layered) window every frame re-uploads the whole window
+            # to the compositor, so a smooth 30 fps bar costs real CPU while setup is busy
+            self._anim.start(100)
         elif self._anim:
             self._anim.stop()
             self._anim = None
         self.update()
 
     def _tick(self):
-        self._pos = (self._pos + 0.018) % 1.4
+        self._pos = (self._pos + 0.054) % 1.4
         self.update()
 
     def paintEvent(self, _e):

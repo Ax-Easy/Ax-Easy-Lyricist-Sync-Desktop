@@ -54,12 +54,16 @@ class GlassDialog(QDialog, chrome.Frame):
                 self.resize(self.width() + 2 * m, self.height() + 2 * m)
 
     def paintEvent(self, _e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
         body = self.body_rect()
-        if self.margin():
-            chrome.paint_shadow(p, body, chrome.RADIUS, self.theme.dark)
-        chrome.paint_glass(p, body, chrome.RADIUS, self.theme, self._backdrop)
+
+        def paint(q):
+            if self.margin():
+                chrome.paint_shadow(q, body, chrome.RADIUS, self.theme.dark)
+            chrome.paint_glass(q, body, chrome.RADIUS, self.theme, self._backdrop)
+        pm = chrome.cached_background(self, (self.theme.dark, self._backdrop, self.margin()), paint)
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawPixmap(0, 0, pm)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton and e.position().y() < 56 + self.margin() and self.body_rect().contains(e.position()):
@@ -294,6 +298,7 @@ class SetupDialog(GlassDialog):
         self._log_n = 0
         self._phase = 0
         self.latency = {}          # step -> max event-loop lateness (ms)
+        self.lat_spikes = []       # every lateness > 100 ms, for the CI report
         self._lat_last = None
         self.rows = {}
         self._new_state()
@@ -336,6 +341,8 @@ class SetupDialog(GlassDialog):
         if self._lat_last is not None and self.thread is not None:
             late = (now - self._lat_last) * 1000 - 50
             sid = self.state.current or 'idle'
+            if late > 100 and len(self.lat_spikes) < 50:
+                self.lat_spikes.append({'step': sid, 'at_s': round(time.time() - self._t0, 1), 'ms': round(late, 1)})
             if late > self.latency.get(sid, 0):
                 self.latency[sid] = round(late, 1)
         self._lat_last = now

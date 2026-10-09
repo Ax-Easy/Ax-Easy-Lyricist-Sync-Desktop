@@ -7,3 +7,4 @@ wheels/
 /screens-ci/
 *.part
 screens/
+release-*/

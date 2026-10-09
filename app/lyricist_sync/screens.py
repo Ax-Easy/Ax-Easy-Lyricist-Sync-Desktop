@@ -65,16 +65,19 @@ def render_alpha(widget):
 
 
 def _banner(p, w, text, dark):
+    """Label strip at the top; wraps onto a second line when the text is long."""
     f = QFont()
     f.setPointSizeF(10.5)
     f.setBold(True)
     p.setFont(f)
-    r = QRectF(16, 12, w - 32, 30)
+    flags = Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap
+    need = p.boundingRect(QRectF(0, 0, w - 56, 200), flags, text)
+    r = QRectF(16, 10, w - 32, max(30, need.height() + 12))
     path = QPainterPath()
     path.addRoundedRect(r, 10, 10)
     p.fillPath(path, QColor(0, 0, 0, 150) if dark else QColor(255, 255, 255, 200))
     p.setPen(QColor('#ffffff') if dark else QColor('#14171F'))
-    p.drawText(r.adjusted(12, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
+    p.drawText(r.adjusted(12, 0, -12, 0), flags, text)
 
 
 def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=False):
@@ -106,6 +109,28 @@ def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=Fal
 def _save(img, path):
     img.save(path)
     print('saved', path, flush=True)
+
+
+def _choir(app, win, dark, fixture_dir, label, out_dir, name):
+    """Review list of the choir fixture with its real 1.1.0 engine result (amber 'check' markers)."""
+    hard = os.path.join(fixture_dir, '..', 'hard')
+    audio, rp = os.path.join(hard, 'choir.mp3'), os.path.join(hard, 'choir.result.json')
+    if not (os.path.exists(audio) and os.path.exists(rp)):
+        return
+    app.add_songs([audio])
+    s = app.songs[-1]
+    with open(rp, encoding='utf-8') as f:
+        s.result = json.load(f)
+    low = s.result.get('low_conf') or 0
+    s.status = 'Synced' + (' · %d to check' % low if low else '')
+    app.cur = len(app.songs) - 1
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(s)
+    k = next((i for i, l in enumerate(s.result['lines']) if (l.get('conf') or 1) < 0.6), 0)
+    win.review.selectRow(k)
+    win.set_busy(False, '', 1.0)
+    _save(compose_labeled(win, dark, label + ' · choir fixture, real 1.1.0 engine result: amber "check" on the choir line'),
+          os.path.join(out_dir, '%s_9_choir_review.png' % name))
 
 
 def render(out_dir, fixture_dir=None):
@@ -215,6 +240,8 @@ def render(out_dir, fixture_dir=None):
                 c.show()
                 _save(compose_labeled(c, dark, 'Files already exist'), os.path.join(out_dir, '%s_8_conflict.png' % name))
                 c.close()
+            if style == 'win10':
+                _choir(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     chrome.force_win10(forced)
     return 0
