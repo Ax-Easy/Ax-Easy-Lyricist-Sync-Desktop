@@ -673,7 +673,7 @@ class GlassWindow(QWidget, chrome.Frame):
         self._loading = True
         self.queue.setRowCount(len(songs))
         for i, s in enumerate(songs):
-            self.queue.setItem(i, 0, QTableWidgetItem(s.label()))
+            self.queue.setItem(i, 0, QTableWidgetItem(self._song_name(s)))
             self.queue.setItem(i, 1, QTableWidgetItem('%d lines' % len(split_lines(s.lyrics)) if s.lyrics.strip() else '—'))
             st = QTableWidgetItem(s.status)
             st.setToolTip(s.status)
@@ -688,6 +688,25 @@ class GlassWindow(QWidget, chrome.Frame):
                 self.queue.selectRow(current)
         self._loading = False
         self._update_buttons()
+
+    @staticmethod
+    def _song_name(s):
+        return ('●  ' if s.result and s.dirty else '') + s.label()
+
+    def refresh_dirty(self):
+        """● before the name of songs with lyrics that are not exported yet."""
+        if not hasattr(self, 'queue'):
+            return
+        for i, s in enumerate(self.app.songs):
+            it = self.queue.item(i, 0)
+            if it is None:
+                continue
+            name = self._song_name(s)
+            if it.text() != name:
+                it.setText(name)
+            dirty = bool(s.result and s.dirty)
+            it.setToolTip('Not exported yet: synced, transcribed or edited since the last export' if dirty else s.label())
+            it.setForeground(QColor(ACCENT) if dirty else self.queue.palette().text().color())
 
     def refresh_dirs(self):
         for i, s in enumerate(self.app.songs):
@@ -897,6 +916,7 @@ class GlassWindow(QWidget, chrome.Frame):
         if h and h.can_redo():
             self.btn_redo.setToolTip('Redo: %s (Ctrl+Y)' % (h.redo_stack[-1].get('label') or 'change'))
         self.btn_cancel.setVisible(busy)
+        self.refresh_dirty()
         self.btn_browse.setEnabled(self.save_mode.currentData() == 'folder')
         self.out_dir.setEnabled(self.save_mode.currentData() == 'folder')
 
@@ -998,7 +1018,25 @@ class GlassWindow(QWidget, chrome.Frame):
             return
         self.app.resync(song, row)
 
-    def show_export_result(self, folders, nfiles, skipped=0):
+    def show_export_report(self, report, closing=False):
+        """The export confirmation (stays until OK / ✕)."""
+        from .dialogs import ExportDoneDialog
+        old = getattr(self, 'export_popup', None)
+        if old is not None:
+            old.close()
+        self.export_popup = d = ExportDoneDialog(self, report, closing)
+        d.show()
+        d.raise_()
+        return d
+
+    def ask_unsaved(self, songs, action='close'):
+        """'export', 'discard' or 'cancel'."""
+        from .dialogs import unsaved_dialog
+        d = unsaved_dialog(self, songs, action)
+        d.exec()
+        return d.choice
+
+    def show_export_result(self, folders, nfiles, skipped=0, failed=0):
         links = ' · '.join('<a href="%s">%s</a>' % (QUrl.fromLocalFile(d).toString(),
                                                      (os.path.basename(d.rstrip('\\/')) or d).replace('<', '&lt;'))
                            for d in folders[:4])
@@ -1006,6 +1044,8 @@ class GlassWindow(QWidget, chrome.Frame):
         txt = 'Exported %d file%s' % (nfiles, '' if nfiles == 1 else 's')
         if skipped:
             txt += ', skipped %d song%s' % (skipped, '' if skipped == 1 else 's')
+        if failed:
+            txt += ', %d failed' % failed
         self.status_lbl.setText(txt + ((' · Open folder: ' + links + more) if links else ''))
 
     def ask_conflict(self, song, existing, state):
@@ -1645,6 +1685,13 @@ class GlassWindow(QWidget, chrome.Frame):
 
     def _remove_song(self):
         rows = self.selected_rows()
+        dirty = [self.app.songs[r] for r in rows if 0 <= r < len(self.app.songs) and self.app.songs[r].result and self.app.songs[r].dirty]
+        if dirty and not self.app.screenshot:
+            from .dialogs import remove_dialog
+            d = remove_dialog(self, dirty)
+            d.exec()
+            if d.choice != 'remove':
+                return
         for r in sorted(rows, reverse=True):
             self.app.remove_song(r)
 
@@ -1667,6 +1714,9 @@ class GlassWindow(QWidget, chrome.Frame):
                 e.ignore()
                 return
             self.app.cancel()
+        if not getattr(self.app, '_closing_ok', False) and not self.app.confirm_close():
+            e.ignore()
+            return
         self.player.stop()
         self.audio.cancel()
         QApplication.instance().removeEventFilter(self)

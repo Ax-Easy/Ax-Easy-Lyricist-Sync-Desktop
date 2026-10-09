@@ -119,6 +119,11 @@ QToolTip {{ background: {menu_bg}; color: {self.text}; border: 1px solid {self.f
 QProgressBar {{ background: {self.field}; border: 1px solid {self.field_border}; border-radius: 7px; height: 14px; text-align: center; font-size: 11px; }}
 QProgressBar::chunk {{ border-radius: 6px; background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 {ACCENT_2}, stop:1 {ACCENT}); }}
 QMessageBox {{ background: {self.bg_top}; }}
+QLabel#h2 {{ font-size: 14px; font-weight: 600; }}
+QTextBrowser#exportList, QTextBrowser#askList {{ background: {self.field}; border: 1px solid {self.field_border};
+  border-radius: 10px; padding: 8px 10px; font-size: 13px; }}
+QLineEdit#inlineEdit {{ border: 1px solid {ACCENT}; border-radius: 7px; padding: 2px 8px; background: {self.field_hover}; }}
+QLineEdit#editText {{ font-size: 14px; padding: 8px 12px; }}
 """
 
 

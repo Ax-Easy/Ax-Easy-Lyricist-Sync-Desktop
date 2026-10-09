@@ -21,6 +21,7 @@ class GlassDialog(QDialog, chrome.Frame):
         self.theme = parent.theme
         self.init_frame()
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setWindowTitle(title)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setModal(True)
         m = self.margin()
@@ -759,6 +760,10 @@ class UpdateDialog(GlassDialog):
         if getattr(self.app, 'update_no_install', False):
             self.accept()
             return
+        if not self.app.confirm_close('update'):
+            self.info.setText('The installer is ready. The update was not installed because some lyrics are not saved. Press Update now to try again.')
+            self._set_buttons('failed_dl')
+            return
         try:
             updater.run_installer(path, relaunch=True)
         except Exception as e:
@@ -1176,3 +1181,171 @@ class KeepEditsDialog(GlassDialog):
     def reject(self):
         self.choice = 'keep'
         super().reject()
+
+
+RED = '#ff5d5d'
+
+
+def _esc(t):
+    return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def export_summary(report):
+    """'12 files saved for 3 songs' (+ skipped / failed counts) from App.last_export."""
+    ok = [e for e in report if e['status'] == 'ok']
+    n = sum(len(e['files']) for e in ok)
+    txt = '%d file%s saved for %d song%s' % (n, '' if n == 1 else 's', len(ok), '' if len(ok) == 1 else 's')
+    sk = sum(1 for e in report if e['status'] == 'skipped')
+    fa = sum(1 for e in report if e['status'] == 'failed')
+    if sk:
+        txt += ' · %d skipped' % sk
+    if fa:
+        txt += ' · %d failed' % fa
+    return txt
+
+
+def export_details_html(report):
+    rows = []
+    for e in report:
+        head = '<b>%s</b>' % _esc(e['label'])
+        if e['status'] == 'ok':
+            files = ''.join('<div style="margin-left:14px">• %s</div>' % _esc(os.path.basename(f)) for f in e['files'])
+            rows.append('%s — %d file%s<br><span style="opacity:.75">%s</span>%s' % (
+                head, len(e['files']), '' if len(e['files']) == 1 else 's', _esc(e['dir']), files))
+        elif e['status'] == 'skipped':
+            rows.append('%s<br><span style="color:%s">⚠ Skipped: %s</span>%s' % (
+                head, AMBER, _esc(e['reason']), ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''))
+        else:
+            rows.append('%s<br><span style="color:%s">✕ Failed: %s</span>%s' % (
+                head, RED, _esc(e['reason']), ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''))
+    return '<div style="line-height:135%">' + '<div style="height:8px"></div>'.join(rows) + '</div>'
+
+
+class ExportDoneDialog(GlassDialog):
+    """After Export: what was written where (full folder paths), skipped / failed songs in amber /
+    red with the reason; Open folder and OK. Stays until dismissed (not modal)."""
+
+    def __init__(self, parent, report, closing=False):
+        problems = any(e['status'] != 'ok' for e in report)
+        title = ('Not closed: some lyrics were not saved' if closing else
+                 'Export finished with problems' if problems else 'Export finished')
+        super().__init__(parent, title, 620, 420)
+        self.setModal(False)
+        self.report = report
+        self.folders = []
+        for e in report:
+            if e['status'] == 'ok' and e['dir'] and e['dir'] not in self.folders:
+                self.folders.append(e['dir'])
+        self.summary = QLabel(('<span style="color:%s">●</span> ' % ('#3ecf8e' if not problems else AMBER)) + export_summary(report))
+        self.summary.setObjectName('h2')
+        self.summary.setTextFormat(Qt.RichText)
+        self.lay.addWidget(self.summary)
+        if closing:
+            self.lay.addWidget(link_label('The window stays open so nothing is lost. Fix the problem below (or use '
+                                          '<b>Close without saving</b>) and close again.', 'plain'))
+        self.details = QTextBrowser()
+        self.details.setObjectName('exportList')
+        self.details.setOpenLinks(False)
+        self.details.setHtml(export_details_html(report))
+        multi = len(report) > 1
+        self.btn_toggle = PillButton('Hide files ▴' if not multi or problems else 'Show files ▾')
+        self.btn_toggle.setAutoDefault(False)
+        self.btn_toggle.clicked.connect(self._toggle)
+        self.btn_toggle.setVisible(multi)
+        self.lay.addWidget(self.btn_toggle, 0, Qt.AlignLeft)
+        self.lay.addWidget(self.details, 1)
+        self.details.setVisible(not multi or problems)
+        self.spacer = QWidget()
+        self.lay.addWidget(self.spacer, 1)
+        self.spacer.setVisible(not self.details.isVisible())
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_open = PillButton('Open folder')
+        self.btn_open.setAutoDefault(False)
+        self.btn_open.setEnabled(bool(self.folders))
+        self.btn_open.setToolTip('\n'.join(self.folders))
+        self.btn_open.clicked.connect(self._open)
+        self.btn_ok = PillButton('OK', 'primary')
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self.accept)
+        for b in (self.btn_open, self.btn_ok):
+            b.setMinimumWidth(110)
+            row.addWidget(b)
+        self.lay.addLayout(row)
+
+    def _toggle(self):
+        v = not self.details.isVisible()
+        self.details.setVisible(v)
+        self.spacer.setVisible(not v)
+        self.btn_toggle.setText('Hide files ▴' if v else 'Show files ▾')
+
+    def _open(self):
+        if len(self.folders) == 1:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.folders[0]))
+            return
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        for d in self.folders:
+            m.addAction(d, lambda d=d: QDesktopServices.openUrl(QUrl.fromLocalFile(d)))
+        m.exec(self.btn_open.mapToGlobal(self.btn_open.rect().bottomLeft()))
+
+
+class AskDialog(GlassDialog):
+    """A glass question with custom buttons [(label, key, kind)]; Esc / ✕ = `cancel_key`."""
+
+    def __init__(self, parent, title, html, buttons, cancel_key='cancel', w=560, h=300, items=None):
+        super().__init__(parent, title, w, h)
+        self.choice = cancel_key
+        self.cancel_key = cancel_key
+        self.lay.addWidget(link_label(html, 'plain'))
+        if items:
+            lst = QTextBrowser()
+            lst.setObjectName('askList')
+            lst.setHtml('<div style="line-height:140%">' + '<br>'.join(
+                '<span style="color:%s">●</span> %s' % (ACCENT, _esc(i)) for i in items) + '</div>')
+            lst.setMaximumHeight(min(160, 34 + 24 * len(items)))
+            self.lay.addWidget(lst)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.buttons = {}
+        for label, key, kind in buttons:
+            b = PillButton(label, kind)
+            b.setMinimumWidth(120)
+            b.setAutoDefault(False)
+            b.clicked.connect(lambda _=False, k=key: self._pick(k))
+            row.addWidget(b)
+            self.buttons[key] = b
+            if kind == 'primary':
+                b.setDefault(True)
+        self.lay.addLayout(row)
+
+    def _pick(self, k):
+        self.choice = k
+        self.accept()
+
+    def reject(self):
+        self.choice = self.cancel_key
+        super().reject()
+
+
+def unsaved_dialog(parent, songs, action='close'):
+    n = len(songs)
+    when = 'before the update restarts the app' if action == 'update' else 'before you close'
+    return AskDialog(parent, 'Unsaved lyrics',
+                     '<span style="font-size:15px;font-weight:600">You have unsaved lyrics for %d song%s</span><br>'
+                     'These songs were synced, transcribed or edited but not exported yet. Export them %s, or they are lost.'
+                     % (n, '' if n == 1 else 's', when),
+                     [('Cancel', 'cancel', 'ghost'), ('Close without saving', 'discard', 'danger'),
+                      ('Export all & close', 'export', 'primary')], w=600, h=330 + min(5, n) * 10,
+                     items=[s.label() for s in songs])
+
+
+def remove_dialog(parent, songs):
+    n = len(songs)
+    return AskDialog(parent, 'Remove unsaved song%s?' % ('' if n == 1 else 's'),
+                     '%s not exported yet. Removing %s from the library loses the synced lines.' % (
+                         ('<b>%s</b> is' % _esc(songs[0].label())) if n == 1 else '<b>%d songs</b> are' % n,
+                         'it' if n == 1 else 'them'),
+                     [('Cancel', 'cancel', 'ghost'), ('Remove', 'remove', 'danger')], w=540, h=250,
+                     items=[s.label() for s in songs] if n > 1 else None)

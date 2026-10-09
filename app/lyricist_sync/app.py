@@ -394,8 +394,8 @@ class App:
             return
         if s and s.result and (res.get('mode') in ('transcribe', 'sync') or 'from' in res):
             edits.history(s).push(s, {'transcribe': 'Transcribe'}.get(res.get('mode'), 'Re-sync' if 'from' in res else 'Auto-sync'))
-            if 'from' not in res:
-                s.edited = False
+        if s and 'from' not in res:
+            s.edited = False
         if s and 'from' in res and s.result:
             k0 = res['from']
             sung = instrumental.sung(s.result['lines'])
@@ -501,11 +501,21 @@ class App:
         self.save_settings()
         self.win.refresh_dirs()
 
-    def export_songs(self, songs, batch=False, ask_dir=None):
-        """Export each song to its own folder. Never overwrites silently. Returns files written."""
+    def export_songs(self, songs, batch=False, ask_dir=None, show=False):
+        """Export each song to its own folder. Never overwrites silently. Returns files written.
+        self.last_export: one entry per song {song, label, dir, files, status ok|skipped|failed, reason};
+        show=True opens the export confirmation (Export button)."""
+        report = []
+        for s in songs:
+            if not s.result:
+                report.append({'song': s, 'label': s.label(), 'dir': target_dir(s, self.settings), 'files': [],
+                               'status': 'skipped', 'reason': 'not synced or transcribed yet'})
         songs = [s for s in songs if s.result]
+        self.last_export = report
         opts = self.win.export_options()
         if not songs:
+            if show and report:
+                self.win.show_export_report(report)
             return []
         if not opts['formats']:
             self.win.status_lbl.setText('Choose at least one format.')
@@ -530,31 +540,66 @@ class App:
         files, folders, skipped = [], [], 0
         for s in songs:
             d = target_dir(s, self.settings, asked)
+            entry = {'song': s, 'label': s.label(), 'dir': d, 'files': [], 'status': 'ok', 'reason': ''}
+            report.append(entry)
             try:
                 written = export_song(s, dict(opts, dir=d), on_conflict=lambda song, ex: self.win.ask_conflict(song, ex, state))
             except OSError as e:
+                entry['status'], entry['reason'] = 'failed', (e.strerror or str(e)) + (
+                    (' (%s)' % e.filename) if getattr(e, 'filename', None) else '')
                 self.win.status_lbl.setText('Export failed for %s: %s' % (s.label(), e))
                 continue
+            entry['files'] = written
             if not written:
                 skipped += 1
+                entry['status'], entry['reason'] = 'skipped', 'the files already exist and you chose Skip'
+                continue
+            s.dirty = False
             files += written
-            if written and d not in folders:
+            if d not in folders:
                 folders.append(d)
-        self.win.show_export_result(folders, len(files), skipped)
+        report.sort(key=lambda e: [x for x in self.songs].index(e['song']) if e['song'] in self.songs else 0)
+        self.win.show_export_result(folders, len(files), skipped, failed=sum(1 for e in report if e['status'] == 'failed'))
+        self.win.refresh_dirty()
+        if show:
+            self.win.show_export_report(report)
         return files
 
     def export_selected(self):
-        sel = [s for s in self.win.selected_songs() if s.result]
-        if not sel and self.current() and self.current().result:
+        sel = list(self.win.selected_songs())
+        if not any(s.result for s in sel) and self.current() and self.current().result:
             sel = [self.current()]
-        return self.export_songs(sel)
+        return self.export_songs(sel, show=True)
 
     def export_current(self):
         s = self.current()
-        return self.export_songs([s]) if s and s.result else []
+        return self.export_songs([s], show=True) if s and s.result else []
 
     def export(self, s):
         return self.export_songs([s])
+
+    # ---------------------------------------------------------------- unsaved work
+    def dirty_songs(self):
+        return [s for s in self.songs if s.result and s.dirty]
+
+    def confirm_close(self, action='close'):
+        """Before the window closes (or the updater restarts the app): unsaved lyrics?
+        True when it may close. "Export all & close" exports each song to its save location and
+        only says yes when every song was written."""
+        dirty = self.dirty_songs()
+        if not dirty or self.screenshot:
+            return True
+        choice = self.win.ask_unsaved(dirty, action)
+        if choice == 'discard':
+            return True
+        if choice != 'export':
+            return False
+        self.export_songs(dirty)
+        rep = getattr(self, 'last_export', []) or []
+        ok = len(rep) == len(dirty) and all(e['status'] == 'ok' for e in rep)
+        if not ok:
+            self.win.show_export_report(rep, closing=True)
+        return ok
 
     # ---------------------------------------------------------------- updates
     def quiet_update_check(self):
@@ -582,6 +627,7 @@ class App:
         UpdateDialog(self.win, self, r).exec()
 
     def quit_for_update(self):
+        self._closing_ok = True        # the unsaved-lyrics question was asked before the installer started
         self.engine.stop()
         self.win.player.stop()
         self.busy = False
