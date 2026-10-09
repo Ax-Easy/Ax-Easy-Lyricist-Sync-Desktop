@@ -23,7 +23,7 @@ a = Analysis(
               'PySide6.Qt3DCore', 'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtPdf', 'PySide6.QtQuick3D',
               'PySide6.QtDesigner', 'PySide6.QtBluetooth', 'PySide6.QtLocation', 'PySide6.QtPositioning', 'PySide6.QtSql',
               'PySide6.QtTest', 'PySide6.QtWebSockets', 'PySide6.QtSerialPort', 'PySide6.QtRemoteObjects',
-              'PySide6.QtSpatialAudio', 'PySide6.QtGraphs', 'PySide6.QtHttpServer', 'numpy'],
+              'PySide6.QtSpatialAudio', 'PySide6.QtGraphs', 'PySide6.QtHttpServer', 'numpy', 'mutagen'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

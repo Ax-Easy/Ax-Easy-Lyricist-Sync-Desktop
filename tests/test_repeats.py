@@ -1,5 +1,5 @@
 """Repeat detection (lines sung more often than written) on synthetic transcripts and on the
-real Whisper transcript of "Stoned" (lines 15-16 sung twice, written once)."""
+real Whisper transcript of a private test song (lines 15-16 sung twice, written once; skipped unless present)."""
 import json, os, sys, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'engine'))
@@ -35,8 +35,8 @@ class TestRepeats(unittest.TestCase):
         self.assertEqual(E.ctc_words(E.romanize(['Καλησπέρα κόσμε'], 'ell')[0]), ['kalespera', 'kosme'])
         self.assertEqual(E.ctc_words(E.romanize(['Ο ήλιος ανατέλλει πάλι 🌅'], 'ell')[0]), ['o', 'elios', 'anatellei', 'pali'])
 
-    @unittest.skipUnless(os.path.exists('/workspace/autosync/out/whisper_free_vocals.json'), 'Stoned transcript not present')
-    def test_stoned(self):
+    @unittest.skipUnless(os.path.exists('/workspace/autosync/out/whisper_free_vocals.json'), 'private test song transcript not present')
+    def test_private_song(self):
         lines = [l.strip() for l in open('/workspace/autosync/lyrics.txt', encoding='utf-8-sig') if l.strip()]
         lw = [E.ctc_words(r) for r in E.romanize(lines)]
         words = [tuple(w) for s in json.load(open('/workspace/autosync/out/whisper_free_vocals.json')) for w in s['words']]

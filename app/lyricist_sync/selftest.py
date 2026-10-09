@@ -72,6 +72,17 @@ def run(report_path=None):
         return out
     check('packaging', packaging)
 
+    def licenses():   # the app is all-rights-reserved: no GPL tag reader (mutagen) in the bundle; tinytag (MIT) reads tags
+        import importlib.util
+        out = {'mutagen': importlib.util.find_spec('mutagen') is not None, 'tinytag': importlib.util.find_spec('tinytag') is not None}
+        if getattr(sys, 'frozen', False):
+            assert not out['mutagen'], 'mutagen (GPL) is bundled'
+            assert out['tinytag'], 'tinytag missing'
+            for f in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+                assert os.path.isfile(os.path.join(getattr(sys, '_MEIPASS', paths.app_dir()), f)), f
+        return out
+    check('licenses', licenses)
+
     check('gpu_detect', lambda: {'gpu': bootstrap.detect_gpu(), 'variant': bootstrap.recommended_variant()})
 
     def exporters():
