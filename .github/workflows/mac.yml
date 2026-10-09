@@ -1,0 +1,456 @@
+name: mac
+
+# macOS: one universal2 "Lyricist Sync.app" (Apple Silicon + Intel) built on an Apple Silicon runner,
+# signed + notarized + stapled (only on trusted events, see "Signing mode"), packed in a drag-to-Applications DMG,
+# then tested from the DMG on both architectures (Gatekeeper, self-test, first-run engine setup, sync/transcribe).
+on:
+  push:
+    # pushes only come from people with write access (never from forks), so they may sign
+    branches: [main, 'mac-*', 'release/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Sign with the Developer ID and notarize (uses the repository secrets)"
+        type: boolean
+        default: true
+      e2e:
+        description: "First-run engine setup (~2.5 GB download) + real sync/transcribe on CPU"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PY_PKG: python-3.12.10-macos11.pkg
+  PY_PKG_SHA256: 8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4
+  PYFW: /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+  MACOS_SIGN_IDENTITY: "Developer ID Application: Evangelos Makrydakis (7BMSHL4YZ6)"
+
+jobs:
+  build:
+    # a PR from a branch of this repo is already built by its push run; PRs from forks build unsigned
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 120
+    outputs:
+      signed: ${{ steps.mode.outputs.sign }}
+      dmg: ${{ steps.dmg.outputs.name }}
+      notary_app: ${{ steps.notarize_app.outputs.id }}
+      notary_dmg: ${{ steps.notarize_dmg.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Signing mode
+        id: mode
+        # Secrets are only exposed to trusted events: a push to main or a v* tag in this repository,
+        # or a manual run by a maintainer. Pull requests (and forks) build an ad-hoc signed, un-notarized app.
+        env:
+          HAS_CERT: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.APPLE_API_KEY_P8_BASE64 != '' }}
+        run: |
+          trusted=false
+          case "${{ github.event_name }}" in
+            push) case "${{ github.ref }}" in refs/heads/main|refs/heads/mac-*|refs/heads/release/*|refs/tags/v*) trusted=true ;; esac ;;
+            workflow_dispatch) [ "${{ inputs.sign }}" = true ] && trusted=true ;;
+          esac
+          if [ "$trusted" = true ] && [ "$HAS_CERT" = true ] && [ "${{ github.repository }}" = "Ax-Easy/lyricist-sync" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"; echo "Developer ID signing + notarization"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"; echo "::notice title=macOS signing::ad-hoc signature, not notarized (event ${{ github.event_name }})"
+          fi
+
+      - name: Universal2 Python 3.12 (python.org installer, SHA-256 pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$PY_PKG" "https://www.python.org/ftp/python/3.12.10/$PY_PKG"
+          echo "$PY_PKG_SHA256  $RUNNER_TEMP/$PY_PKG" | shasum -a 256 -c -
+          sudo installer -pkg "$RUNNER_TEMP/$PY_PKG" -target /
+          lipo -archs "$PYFW"
+          "$PYFW" -m venv "$RUNNER_TEMP/bv"
+          echo "$RUNNER_TEMP/bv/bin" >> "$GITHUB_PATH"
+
+      - name: Build tools (PySide6 6.7.3 universal2 = macOS 11+, PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          pip install PySide6-Essentials==6.7.3 PySide6-Addons==6.7.3 pyinstaller==6.22.3 tinytag==2.3.2 dmgbuild==1.6.5
+          python -c "import PySide6, sys, platform; print(PySide6.__version__, sys.version, platform.machine())"
+
+      - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
+        run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
+
+      - name: PyInstaller (universal2)
+        run: pyinstaller LyricistSync-mac.spec --noconfirm --clean
+
+      - name: Every Mach-O in the bundle is universal (arm64 + x86_64); Info.plist minimums
+        run: |
+          set -euo pipefail
+          APP="dist/Lyricist Sync.app"
+          python - "$APP" <<'PY'
+          import os, subprocess, sys
+          app = sys.argv[1]; bad = []; n = 0
+          for root, _, files in os.walk(app):
+              for f in files:
+                  p = os.path.join(root, f)
+                  if os.path.islink(p):
+                      continue
+                  with open(p, 'rb') as fh:
+                      magic = fh.read(4)
+                  if magic not in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe'):
+                      continue
+                  a = subprocess.run(['lipo', '-archs', p], capture_output=True, text=True).stdout.split()
+                  if not a:
+                      continue
+                  n += 1
+                  if not {'arm64', 'x86_64'} <= set(a):
+                      bad.append('%s: %s' % (p, ' '.join(a)))
+          print('%d Mach-O files checked' % n)
+          print('\n'.join(bad))
+          sys.exit(1 if bad else 0)
+          PY
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' -c 'Print :LSMinimumSystemVersionByArchitecture' -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist"
+          for f in QtCore QtGui QtWidgets; do
+            vtool -show-build "$(find "$APP" -path "*$f.framework/Versions/A/$f" -type f | head -1)" | grep -E 'minos|architecture' || true
+          done
+          vtool -show-build "$APP/Contents/MacOS/LyricistSync" | grep -E 'minos|architecture' || true
+
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: steps.mode.outputs.sign == 'true'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KC="$RUNNER_TEMP/lsync-signing.keychain-db"
+          KC_PASS="$(uuidgen)"
+          echo "::add-mask::$KC_PASS"
+          echo "SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$KC" -f pkcs12 -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          curl -fsSL --retry 3 https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c -
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC" || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KC"
+
+      - name: Sign the app inside-out (hardened runtime, secure timestamp, entitlements)
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.mode.outputs.sign }}" = true ]; then
+            mac/sign.sh "dist/Lyricist Sync.app" "$MACOS_SIGN_IDENTITY" "$SIGN_KEYCHAIN"
+          else
+            mac/sign.sh "dist/Lyricist Sync.app" -
+          fi
+          codesign -d --entitlements - --xml "dist/Lyricist Sync.app" | plutil -p - || true
+
+      - name: API key for notarytool
+        if: steps.mode.outputs.sign == 'true'
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/notary"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary/AuthKey.p8"
+          echo "NOTARY_KEY=$RUNNER_TEMP/notary/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Notarize the app
+        id: notarize_app
+        if: steps.mode.outputs.sign == 'true'
+        timeout-minutes: 55
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p notary
+          ditto -c -k --sequesterRsrc --keepParent "dist/Lyricist Sync.app" "$RUNNER_TEMP/notary/app.zip"
+          mac/notarize.sh "$RUNNER_TEMP/notary/app.zip" "$NOTARY_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" notary/app.json | tee notary/app.txt
+          grep -E '^(id|status)=' notary/app.txt >> "$GITHUB_OUTPUT"
+          xcrun stapler staple "dist/Lyricist Sync.app"
+          xcrun stapler validate "dist/Lyricist Sync.app"
+          spctl -a -vvv -t exec "dist/Lyricist Sync.app" 2>&1 | tee notary/spctl-app.txt
+
+      - name: Self-test the signed app (arm64 slice, hardened runtime)
+        run: |
+          rc=0
+          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --version
+          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --selftest --report selftest-build.json || rc=$?
+          cat selftest-build.json || true
+          exit $rc
+
+      - name: If the self-test failed, run it from source with a console
+        if: failure()
+        working-directory: app
+        run: python -X faulthandler -m lyricist_sync --selftest --report ../selftest-src.json; cat ../selftest-src.json || true
+
+      - name: Screenshots (native window, dark and light) + maximized
+        run: |
+          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens screens-mac --fixture tests/fixtures
+          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens-maximized screens-mac/max --fixture tests/fixtures || echo "::warning::maximized screens failed"
+          ls -R screens-mac | head -80
+
+      - name: DMG (drag to Applications, Retina background)
+        id: dmg
+        run: |
+          set -euo pipefail
+          V=$(python -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('app/lyricist_sync/__init__.py').read()).group(1))")
+          NAME="AxEasy-LyricistSync-$V-mac-universal.dmg"
+          QT_QPA_PLATFORM=offscreen python mac/make_dmg_background.py build/dmgbg
+          tiffutil -cathidpicheck build/dmgbg/dmg-background.png build/dmgbg/dmg-background@2x.png -out build/dmg-background.tiff
+          mkdir -p dist-mac
+          dmgbuild -s mac/dmg_settings.py -D app="dist/Lyricist Sync.app" -D background=build/dmg-background.tiff "Lyricist Sync" "dist-mac/$NAME"
+          if [ "${{ steps.mode.outputs.sign }}" = true ]; then
+            codesign --force --timestamp --keychain "$SIGN_KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "dist-mac/$NAME"
+            codesign --verify -vv "dist-mac/$NAME"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "DMG_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Notarize + staple the DMG
+        id: notarize_dmg
+        if: steps.mode.outputs.sign == 'true'
+        timeout-minutes: 55
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mac/notarize.sh "dist-mac/$DMG_NAME" "$NOTARY_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" notary/dmg.json | tee notary/dmg.txt
+          grep -E '^(id|status)=' notary/dmg.txt >> "$GITHUB_OUTPUT"
+          xcrun stapler staple "dist-mac/$DMG_NAME"
+
+      - name: Gatekeeper checks (spctl install, stapler, codesign --deep --strict)
+        if: steps.mode.outputs.sign == 'true'
+        run: |
+          set -euo pipefail
+          D="dist-mac/$DMG_NAME"
+          { echo "== spctl -a -vvv -t install"; spctl -a -vvv -t install "$D" 2>&1
+            echo "== stapler validate"; xcrun stapler validate "$D" 2>&1
+            M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
+            echo "== codesign --verify --deep --strict (app in the DMG)"; codesign --verify --deep --strict -vv "$M/Lyricist Sync.app" 2>&1
+            echo "== spctl -a -vvv -t exec (app in the DMG)"; spctl -a -vvv -t exec "$M/Lyricist Sync.app" 2>&1
+            echo "== stapler validate (app)"; xcrun stapler validate "$M/Lyricist Sync.app" 2>&1
+            hdiutil detach "$M" -quiet; } | tee notary/gatekeeper.txt
+          grep -q 'source=Notarized Developer ID' notary/gatekeeper.txt
+
+      - name: Checksums
+        run: |
+          cd dist-mac && shasum -a 256 *.dmg | tee SHA256SUMS && ls -l
+
+      - name: Remove the temporary keychain and API key
+        if: always()
+        run: |
+          if [ -n "${SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$SIGN_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: |
+            dist-mac/*.dmg
+            dist-mac/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-build-reports
+          path: |
+            selftest-*.json
+            notary/*
+            screens-mac/**
+            build/dmgbg/*
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+            variant: mps
+          - os: macos-15-intel
+            arch: x86_64
+            variant: cpu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      LSHOME: ${{ github.workspace }}/../lsync-home-unused
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-dmg
+          path: dmg
+
+      - name: Machine
+        run: |
+          uname -m; sysctl -n machdep.cpu.brand_string; sysctl -n hw.memsize | awk '{print $1/1073741824 " GB"}'; sw_vers
+          system_profiler SPDisplaysDataType | grep -E 'Chipset|Metal' || true
+
+      - name: Install from the DMG like a user (quarantined download, mount, copy to /Applications)
+        run: |
+          set -euo pipefail
+          D=$(ls dmg/*.dmg | head -1)
+          xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;$(uuidgen)" "$D"
+          if [ "${{ needs.build.outputs.signed }}" = true ]; then
+            echo "== spctl -a -vvv -t install"; spctl -a -vvv -t install "$D"
+            echo "== stapler validate"; xcrun stapler validate "$D"
+          fi
+          M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
+          ls -la "$M"
+          ditto "$M/Lyricist Sync.app" "/Applications/Lyricist Sync.app"
+          hdiutil detach "$M" -quiet
+          APP="/Applications/Lyricist Sync.app"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "BIN=$APP/Contents/MacOS/LyricistSync" >> "$GITHUB_ENV"
+          echo "H=$HOME/Library/Application Support/Ax-Easy/LyricistSync" >> "$GITHUB_ENV"
+          codesign --verify --deep --strict -vv "$APP"
+          if [ "${{ needs.build.outputs.signed }}" = true ]; then
+            echo "== spctl -a -vvv -t exec (installed, quarantined)"; spctl -a -vvv -t exec "$APP"
+          fi
+          xattr -l "$APP" || true
+
+      - name: Self-test (${{ matrix.arch }} slice)
+        run: |
+          rc=0
+          "$BIN" --version
+          "$BIN" --selftest --report selftest-${{ matrix.arch }}.json || rc=$?
+          python -c "import json;d=json.load(open('selftest-${{ matrix.arch }}.json'));print('ok', d.get('ok'));[print('FAIL', c) for c in d.get('checks', []) if not c.get('ok')]" || cat selftest-${{ matrix.arch }}.json
+          exit $rc
+
+      - name: Screenshots on ${{ matrix.arch }}
+        run: |
+          "$BIN" --screens screens-${{ matrix.arch }} --fixture tests/fixtures || echo "::warning::screens failed"
+
+      - name: In-app updater (local server offers 9.9.9 = this DMG; verify signature/Team ID/Gatekeeper, stage the swap)
+        if: needs.build.outputs.signed == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p www && cp dmg/*.dmg www/
+          D=$(ls www/*.dmg | head -1)
+          python - "$D" <<'PY'
+          import hashlib, json, os, sys
+          d = sys.argv[1]
+          h = hashlib.sha256(open(d, 'rb').read()).hexdigest()
+          base = 'http://127.0.0.1:8766/'
+          m = {'version': '9.9.9', 'date': '2026-10-09', 'notes': '- CI test release', 'url': base + 'none.exe',
+               'sha256': '0' * 64, 'size': 1, 'minimum_os': '10.0.17763',
+               'mac': {'url': base + os.path.basename(d), 'sha256': h, 'size': os.path.getsize(d),
+                       'minimum_os': {'arm64': '11.0', 'x86_64': '12.0'}}}
+          json.dump(m, open('www/update.json', 'w'), indent=1)
+          PY
+          python tools/serve_throttled.py www --port 8766 --rate 80 > srv.log 2>&1 &
+          sleep 2
+          LYRICIST_SYNC_UPDATE_TEST=1 "$BIN" --update-test http://127.0.0.1:8766/update.json --install --report update-test-${{ matrix.arch }}.json || { cat update-test-${{ matrix.arch }}.json; exit 1; }
+          cat update-test-${{ matrix.arch }}.json
+          for i in $(seq 1 120); do grep -q 'update swapped\|update swap failed' "$H/updates/swap.log" 2>/dev/null && break; sleep 1; done
+          cat "$H/updates/swap.log"
+          grep -q 'update swapped' "$H/updates/swap.log"
+          codesign --verify --deep --strict "$APP" && "$BIN" --version
+
+      - name: First-run setup in the GUI (${{ matrix.variant }} build; engine on CPU for CI)
+        if: github.event_name != 'workflow_dispatch' || inputs.e2e
+        continue-on-error: ${{ matrix.arch != 'arm64' }}
+        env:
+          LYRICIST_SYNC_NO_MPS: "1"
+          LYRICIST_SYNC_STALL: "30"
+        run: |
+          t=$(date +%s); rc=0
+          "$BIN" --setup-gui --auto --variant ${{ matrix.variant }} --report setup-gui-${{ matrix.arch }}.json --shots setup-shots-${{ matrix.arch }} || rc=$?
+          cat setup-gui-${{ matrix.arch }}.json || true
+          echo "setup took $(( $(date +%s) - t )) s"
+          tail -40 "$H/setup.log" || true
+          exit $rc
+
+      - name: Downloaded engine - no quarantine, torch loads (CPU math; MPS availability reported)
+        id: engine
+        if: github.event_name != 'workflow_dispatch' || inputs.e2e
+        continue-on-error: ${{ matrix.arch != 'arm64' }}
+        run: |
+          set -euo pipefail
+          PYR="$H/runtime/python/bin/python3"
+          echo "quarantined files in the runtime: $(xattr -lr "$H/runtime" 2>/dev/null | grep -c com.apple.quarantine || true)"
+          [ "$(xattr -lr "$H/runtime" 2>/dev/null | grep -c com.apple.quarantine || true)" = 0 ]
+          file "$PYR" "$(readlink -f "$PYR")" || true
+          "$PYR" -c "import platform, torch, torchaudio, numpy, whisper, demucs; x = torch.randn(256, 256); print(platform.machine(), 'torch', torch.__version__, 'torchaudio', torchaudio.__version__, 'numpy', numpy.__version__, 'mps built', torch.backends.mps.is_built(), 'mps available', torch.backends.mps.is_available(), 'matmul', float((x @ x).abs().sum()) > 0)"
+          "$PYR" tests/test_timing.py -v
+          "$PYR" tests/test_repeats.py -v
+          "$PYR" tests/test_transcribe.py -v
+
+      - name: Sync the demo songs and the hard fixtures (CPU)
+        if: steps.engine.outcome == 'success'
+        continue-on-error: ${{ matrix.arch != 'arm64' }}
+        env:
+          LYRICIST_SYNC_NO_MPS: "1"
+        run: |
+          "$BIN" --sync tests/fixtures/demo_en.mp3 tests/fixtures/demo_el.mp3 tests/hard/intro_long.mp3 tests/hard/intro_hum.mp3 tests/hard/intro_bleed.mp3 tests/hard/choir.mp3 --out e2e-out-${{ matrix.arch }} --report e2e-${{ matrix.arch }}.json || { tail -60 "$H/engine.log"; exit 1; }
+          python tests/check_e2e.py e2e-${{ matrix.arch }}.json --expect 6
+
+      - name: Transcribe without lyrics (Whisper small, CPU) + sync after transcribe
+        if: steps.engine.outcome == 'success'
+        continue-on-error: ${{ matrix.arch != 'arm64' }}
+        env:
+          LYRICIST_SYNC_NO_MPS: "1"
+        run: |
+          set -e
+          mkdir -p tr-in && cp tests/fixtures/demo_en.mp3 tests/fixtures/demo_el.mp3 tr-in/
+          "$BIN" --transcribe tr-in/demo_en.mp3 --out tr-out --report transcribe-en.json || { tail -60 "$H/engine.log"; exit 1; }
+          "$BIN" --transcribe tr-in/demo_el.mp3 --lang el --out tr-out --report transcribe-el.json || { tail -60 "$H/engine.log"; exit 1; }
+          "$BIN" --sync tr-in/demo_en.mp3 --lyrics tests/fixtures/demo_en.txt --out tr-out2 --report after-sync.json
+          python tests/check_transcribe.py transcribe-en.json transcribe-el.json --expect 2 --after-sync after-sync.json
+          python tests/check_e2e.py after-sync.json --expect 1
+          "$BIN" --edit-test tr-in/demo_en.mp3 --lyrics tests/fixtures/demo_en.txt --out edit-out --report edit-test.json; cat edit-test.json
+
+      - name: Apple GPU (Metal/MPS) smoke test - sync one song with the GPU if this VM exposes Metal
+        if: matrix.arch == 'arm64' && steps.engine.outcome == 'success'
+        continue-on-error: true
+        run: |
+          "$BIN" --sync tests/fixtures/demo_en.mp3 --out mps-out --report mps.json || { tail -60 "$H/engine.log"; exit 1; }
+          python tests/check_e2e.py mps.json --expect 1
+          grep -iE 'device|mps' "$H/engine.log" | tail -20 || true
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p logs-${{ matrix.arch }}
+          cp "$H"/*.log "$H/state.json" logs-${{ matrix.arch }}/ 2>/dev/null || true
+          cp "$H"/updates/*.log logs-${{ matrix.arch }}/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-test-${{ matrix.arch }}
+          path: |
+            selftest-*.json
+            update-test-*.json
+            setup-gui-*.json
+            setup-shots-*/**
+            screens-*/**
+            e2e-*.json
+            e2e-out-*/*
+            transcribe-*.json
+            after-sync.json
+            edit-test.json
+            mps.json
+            tr-out/*
+            logs-*/*

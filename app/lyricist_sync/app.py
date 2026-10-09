@@ -643,6 +643,23 @@ class App:
         QTimer.singleShot(200, self.qapp.quit)
 
 
+def _install_file_open_handler(qapp, app):
+    """macOS: files dropped on the Dock icon or opened with "Open With" arrive as QFileOpenEvent (not argv)."""
+    from PySide6.QtCore import QEvent, QObject
+
+    class _Opener(QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() == QEvent.FileOpen:
+                f = ev.file()
+                if f and os.path.isfile(f):
+                    QTimer.singleShot(0, lambda: app.add_songs([f]))
+                return True
+            return False
+
+    qapp._file_opener = _Opener(qapp)
+    qapp.installEventFilter(qapp._file_opener)
+
+
 def run_gui(argv):
     qapp = QApplication.instance() or QApplication(argv)
     qapp.setApplicationName('Ax-Easy Lyricist Sync')
@@ -650,6 +667,8 @@ def run_gui(argv):
     from PySide6.QtGui import QIcon
     qapp.setWindowIcon(QIcon(paths.resource('res', 'icon.svg')))
     app = App(qapp)
+    if sys.platform == 'darwin':
+        _install_file_open_handler(qapp, app)
     app.win.show()
     files = [a for a in argv[1:] if os.path.isfile(a)]
     if files:
