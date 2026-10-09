@@ -1205,20 +1205,21 @@ def export_summary(report):
 
 
 def export_details_html(report):
+    """Problems first (failed in red, skipped in amber, with the reason), then the songs written:
+    full folder path and the file names."""
+    order = {'failed': 0, 'skipped': 1, 'ok': 2}
     rows = []
-    for e in report:
+    for e in sorted(report, key=lambda e: order.get(e['status'], 3)):
         head = '<b>%s</b>' % _esc(e['label'])
+        folder = ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''
         if e['status'] == 'ok':
-            files = ''.join('<div style="margin-left:14px">• %s</div>' % _esc(os.path.basename(f)) for f in e['files'])
-            rows.append('%s — %d file%s<br><span style="opacity:.75">%s</span>%s' % (
-                head, len(e['files']), '' if len(e['files']) == 1 else 's', _esc(e['dir']), files))
+            names = ' · '.join(_esc(os.path.basename(f)) for f in e['files'])
+            rows.append('%s — %d file%s%s<br>%s' % (head, len(e['files']), '' if len(e['files']) == 1 else 's', folder, names))
         elif e['status'] == 'skipped':
-            rows.append('%s<br><span style="color:%s">⚠ Skipped: %s</span>%s' % (
-                head, AMBER, _esc(e['reason']), ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''))
+            rows.append('%s<br><span style="color:%s">⚠ Skipped: %s</span>%s' % (head, AMBER, _esc(e['reason']), folder))
         else:
-            rows.append('%s<br><span style="color:%s">✕ Failed: %s</span>%s' % (
-                head, RED, _esc(e['reason']), ('<br><span style="opacity:.75">%s</span>' % _esc(e['dir'])) if e.get('dir') else ''))
-    return '<div style="line-height:135%">' + '<div style="height:8px"></div>'.join(rows) + '</div>'
+            rows.append('%s<br><span style="color:%s">✕ Failed: %s</span>%s' % (head, RED, _esc(e['reason']), folder))
+    return ''.join('<p style="margin-top:0; margin-bottom:10px; line-height:130%%">%s</p>' % r for r in rows)
 
 
 class ExportDoneDialog(GlassDialog):
@@ -1229,7 +1230,7 @@ class ExportDoneDialog(GlassDialog):
         problems = any(e['status'] != 'ok' for e in report)
         title = ('Not closed: some lyrics were not saved' if closing else
                  'Export finished with problems' if problems else 'Export finished')
-        super().__init__(parent, title, 620, 420)
+        super().__init__(parent, title, 660, 470)
         self.setModal(False)
         self.report = report
         self.folders = []
@@ -1247,6 +1248,7 @@ class ExportDoneDialog(GlassDialog):
         self.details.setObjectName('exportList')
         self.details.setOpenLinks(False)
         self.details.setHtml(export_details_html(report))
+        self.details.setMinimumHeight(230)
         multi = len(report) > 1
         self.btn_toggle = PillButton('Hide files ▴' if not multi or problems else 'Show files ▾')
         self.btn_toggle.setAutoDefault(False)
@@ -1336,7 +1338,7 @@ def unsaved_dialog(parent, songs, action='close'):
                      '<span style="font-size:15px;font-weight:600">You have unsaved lyrics for %d song%s</span><br>'
                      'These songs were synced, transcribed or edited but not exported yet. Export them %s, or they are lost.'
                      % (n, '' if n == 1 else 's', when),
-                     [('Cancel', 'cancel', 'ghost'), ('Close without saving', 'discard', 'danger'),
+                     [('Cancel', 'cancel', 'ghost'), ('Close without saving', 'discard', 'ghost'),
                       ('Export all & close', 'export', 'primary')], w=600, h=330 + min(5, n) * 10,
                      items=[s.label() for s in songs])
 
@@ -1347,5 +1349,5 @@ def remove_dialog(parent, songs):
                      '%s not exported yet. Removing %s from the library loses the synced lines.' % (
                          ('<b>%s</b> is' % _esc(songs[0].label())) if n == 1 else '<b>%d songs</b> are' % n,
                          'it' if n == 1 else 'them'),
-                     [('Cancel', 'cancel', 'ghost'), ('Remove', 'remove', 'danger')], w=540, h=250,
+                     [('Cancel', 'cancel', 'ghost'), ('Remove', 'remove', 'primary')], w=540, h=250,
                      items=[s.label() for s in songs] if n > 1 else None)
