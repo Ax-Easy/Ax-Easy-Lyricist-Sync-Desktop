@@ -712,7 +712,7 @@ class ModelDownload:
         self.name = name
         steps = [(k, lbl.replace('{N}', name)) for k, lbl in self.STEPS]
         self.state = state or SetupState(steps)
-        self.setup = Setup('cpu', cancel=cancel, state=self.state, whisper=name)
+        self.setup = Setup(variants()[0], cancel=cancel, state=self.state, whisper=name)   # arm64 Macs have only 'mps'
         self.setup.items = [i for i in self.setup.items if i['kind'] == 'model' and model_group(i) == 'whisper']
         self.cancel = self.setup.cancel
 

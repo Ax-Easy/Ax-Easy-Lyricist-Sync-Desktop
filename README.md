@@ -16,7 +16,7 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 | | File | |
 |---|---|---|
 | **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Setup-1.3.1.exe](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Setup-1.3.1.exe) | per-user installer, about 41 MB |
-| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
 | **Manual** (English) | [AxEasy-LyricistSync-Manual-EN.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-EN.pdf) | |
 | **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Manual-GR.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-GR.pdf) | |
 
@@ -313,7 +313,7 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 - The installer (`AxEasy-LyricistSync-Setup-1.3.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
-- macOS: the DMG (about 90 MB) holds the universal app; drag it to Applications.
+- macOS: the DMG (about 94 MB) holds the universal app; drag it to Applications.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`
   (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync`). Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:

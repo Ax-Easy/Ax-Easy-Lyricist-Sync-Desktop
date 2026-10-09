@@ -137,9 +137,9 @@ def apply_platform_style(qapp):
 
 def ui_font():
     import sys
-    if sys.platform == 'darwin':   # San Francisco (the system font) at the standard macOS size
+    if sys.platform == 'darwin':   # San Francisco (the system font); 12 pt fits the layout made for Segoe UI 10 pt
         f = QFont()
-        f.setPointSizeF(13)
+        f.setPointSizeF(12)
         return f
     fams = set(QFontDatabase.families())
     for name in ('Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', 'Inter', 'Noto Sans', 'DejaVu Sans'):

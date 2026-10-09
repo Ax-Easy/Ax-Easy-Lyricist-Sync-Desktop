@@ -24,7 +24,21 @@ def _console():
         sys.stderr = sys.stdout
 
 
+def _mac_ca_bundle():
+    """macOS: the frozen python.org OpenSSL looks for CA certificates under
+    /Library/Frameworks/Python.framework/.../etc/openssl, which only exists where python.org Python is
+    installed (CI runners, not users' Macs). Point it at the system's root bundle so HTTPS (engine
+    download, updates) verifies everywhere."""
+    if sys.platform != 'darwin' or os.environ.get('SSL_CERT_FILE'):
+        return
+    import ssl
+    p = ssl.get_default_verify_paths()
+    if not (p.cafile and os.path.exists(p.cafile)) and os.path.exists('/etc/ssl/cert.pem'):
+        os.environ['SSL_CERT_FILE'] = '/etc/ssl/cert.pem'
+
+
 def main(argv=None):
+    _mac_ca_bundle()
     argv = sys.argv if argv is None else argv
     ap = argparse.ArgumentParser(prog='LyricistSync')
     ap.add_argument('files', nargs='*', help='audio files to open in the GUI')
@@ -59,7 +73,22 @@ def main(argv=None):
     ap.add_argument('--install', action='store_true')
     ap.add_argument('--edit-test', metavar='AUDIO', help='CI: sync AUDIO (--lyrics), edit a line like the review list does, '
                     're-align that line with the engine, export, and write a --report')
+    ap.add_argument('--https-check', metavar='URL', help=argparse.SUPPRESS)   # CI: TLS verification works in the frozen app
     a = ap.parse_args(argv[1:])
+    if a.https_check:
+        import ssl
+        import urllib.error
+        import urllib.request
+        print('verify paths:', ssl.get_default_verify_paths(), 'SSL_CERT_FILE=', os.environ.get('SSL_CERT_FILE'), flush=True)
+        try:
+            with urllib.request.urlopen(a.https_check, timeout=30) as r:
+                print('HTTPS OK', r.status, flush=True)
+        except urllib.error.HTTPError as e:
+            print('HTTPS OK (HTTP %d)' % e.code, flush=True)
+        except Exception as e:  # noqa: BLE001
+            print('HTTPS FAILED', repr(e), flush=True)
+            return 1
+        return 0
     if os.environ.get('LYRICIST_SYNC_FAULTHANDLER'):   # CI: SIGUSR1 / a crash dumps every thread's Python stack here
         import faulthandler
         _fh = open(os.environ['LYRICIST_SYNC_FAULTHANDLER'], 'w')
