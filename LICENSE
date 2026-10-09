@@ -1,0 +1,38 @@
+Ax-Easy Lyricist Sync
+Copyright © 2026 Ax-Easy (Evangelos Makrydakis). All rights reserved.
+
+SOURCE-AVAILABLE, VIEW-ONLY LICENSE
+
+1. Viewing. The source code in this repository is published so that it can be read and reviewed.
+   Publication does not grant any license to it beyond what this notice states.
+
+2. No other rights. Except as stated in sections 3 and 4, you may not copy, modify, merge, publish,
+   distribute, sublicense, sell, or otherwise use the source code or any part of it, or create
+   derivative works from it, without prior written permission from Ax-Easy.
+
+3. Official binaries. You may download, install and run the official binaries of Ax-Easy Lyricist
+   Sync published by Ax-Easy (the Windows installer and the macOS disk image attached to the
+   GitHub releases of Ax-Easy/lyricist-sync, or offered on ax-easy.com) for your personal use,
+   including making lyric files for your own songs. You may not redistribute, resell, or modify
+   those binaries, except where a third-party license grants you that right (for example, the
+   LGPL-3.0 right to replace the Qt / PySide6 libraries and to reverse-engineer the binaries to
+   debug such a modification; see section 5).
+
+4. GitHub. As required by the GitHub Terms of Service, by publishing this repository publicly
+   Ax-Easy allows GitHub users to view the repository and to fork it on GitHub (to create a copy
+   within GitHub). That permission is limited to GitHub's own features; it does not grant any right
+   to use, modify, or distribute the code outside of them.
+
+5. Third-party components. Ax-Easy Lyricist Sync uses and downloads third-party software and
+   models. They are not covered by this notice: each stays under its own license, listed in
+   THIRD_PARTY_NOTICES.md. Nothing in this notice restricts the rights those licenses give you.
+   In particular, the Qt / PySide6 libraries (LGPL-3.0) in the official binaries are dynamically
+   linked and can be replaced, as described in THIRD_PARTY_NOTICES.md.
+
+6. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+   PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Permission requests: https://www.ax-easy.com

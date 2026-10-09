@@ -1,6 +1,8 @@
 """First-run setup: download (resumable, SHA256-verified) Python 3.11, the right PyTorch
-build (CUDA 12.4 for NVIDIA GPUs, CPU otherwise), the engine wheels and the models into
-%LOCALAPPDATA%\\Ax-Easy\\LyricistSync, then install them.  No Qt here (CLI and GUI share it)."""
+build (CUDA 12.4 for NVIDIA GPUs, CPU otherwise; on a Mac the Apple Silicon build with Metal
+(MPS) or the Intel build), the engine wheels and the models into %LOCALAPPDATA%\\Ax-Easy\\LyricistSync
+(macOS: ~/Library/Application Support/Ax-Easy/LyricistSync), then install them.  No Qt here
+(CLI and GUI share it)."""
 import ctypes
 import glob
 import hashlib
@@ -15,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import paths
+from . import macfx, paths
 
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 UA = 'AxEasy-LyricistSync/1.0'
@@ -25,14 +27,32 @@ class Cancelled(Exception):
     pass
 
 
-def manifest():
-    with open(paths.resource('manifest.json'), encoding='utf-8') as f:
-        return json.load(f)
+IS_MAC = sys.platform == 'darwin'
+VARIANT_LABEL = {'cuda': 'CUDA', 'cpu': 'CPU', 'mps': 'Apple Silicon'}
+
+
+def manifest(arch=None):
+    """The download list. On macOS: manifest-mac.json, the section for this Mac's architecture
+    (Apple Silicon or Intel), in the same shape as the Windows manifest."""
+    if not IS_MAC and not arch:
+        with open(paths.resource('manifest.json'), encoding='utf-8') as f:
+            return json.load(f)
+    with open(paths.resource('manifest-mac.json'), encoding='utf-8') as f:
+        m = json.load(f)
+    sec = m['arch'][arch or macfx.machine_arch()]
+    out = {k: v for k, v in m.items() if k != 'arch'}
+    out.update(sec)
+    return out
 
 
 def detect_gpu():
     """{'nvidia': bool, 'name', 'driver', 'cuda_driver' (e.g. 12040), 'vram_gb'} without importing torch."""
     info = {'nvidia': False, 'name': '', 'driver': '', 'cuda_driver': 0, 'vram_gb': 0.0}
+    if IS_MAC:   # Apple Silicon: the GPU shares the unified memory; Intel Macs: CPU build
+        arch = macfx.machine_arch()
+        info.update(apple=arch == 'arm64', arch=arch, name=macfx.chip_name(), memory_gb=macfx.memory_gb(),
+                    macos='.'.join(str(x) for x in macfx.macos_version()))
+        return info
     if os.name == 'nt':
         try:
             nv = ctypes.WinDLL('nvcuda.dll')
@@ -74,14 +94,39 @@ WHISPER_ORDER = ['small', 'medium', 'large-v3-turbo', 'large-v3']
 TIERS = [(23.5, 'large-v3'), (11.5, 'large-v3-turbo'), (5.5, 'medium')]
 
 
+# Apple Silicon: Whisper runs on the GPU (MPS) out of the unified memory, which macOS and the
+# other apps share, so the steps are one size class lower than the same amount of NVIDIA VRAM:
+# 8 GB -> small, 16 GB -> medium, 24 GB -> large-v3-turbo, 32 GB and up -> large-v3.
+MAC_TIERS = [(30.0, 'large-v3'), (22.0, 'large-v3-turbo'), (15.0, 'medium')]
+# Intel Macs run on the CPU (fp32): medium only with plenty of memory (it is ~3x slower than small).
+INTEL_TIERS = [(30.0, 'medium')]
+
+
 def whisper_tier(vram_gb=None, variant='cuda'):
-    """CPU or < 6 GB -> small, 6-11 GB -> medium, 12-23 GB -> large-v3-turbo, >= 24 GB -> large-v3."""
-    if variant != 'cuda' or not vram_gb:
+    """CPU or < 6 GB -> small, 6-11 GB -> medium, 12-23 GB -> large-v3-turbo, >= 24 GB -> large-v3.
+    variant 'mps' (Apple Silicon) and 'mac-cpu' (Intel Mac) read vram_gb as the memory size."""
+    tiers = {'cuda': TIERS, 'mps': MAC_TIERS, 'mac-cpu': INTEL_TIERS}.get(variant)
+    if not tiers or not vram_gb:
         return 'small'
-    for gb, name in TIERS:
+    for gb, name in tiers:
         if vram_gb >= gb:
             return name
     return 'small'
+
+
+def tier_variant(variant):
+    """The whisper_tier() variant for this platform (an Intel Mac's 'cpu' is tiered by memory)."""
+    return 'mac-cpu' if IS_MAC and variant == 'cpu' else variant
+
+
+def state_tier(st=None):
+    """The hardware Whisper tier from state.json (after setup): VRAM on CUDA, memory on a Mac."""
+    st = st if st is not None else (state() or {})
+    eng = st.get('engine') or {}
+    variant = st.get('variant', 'cpu')
+    if IS_MAC:
+        return whisper_tier(eng.get('memory_gb') or macfx.memory_gb(), tier_variant(variant))
+    return whisper_tier(eng.get('vram_gb') if eng.get('device') == 'cuda' else None, variant)
 
 
 def whisper_models(man=None):
@@ -133,7 +178,16 @@ def delete_whisper(name, in_use, home=None):
     return freed
 
 
+def variants():
+    """The PyTorch builds this platform can install, recommended first on a Mac."""
+    if IS_MAC:
+        return ['mps'] if macfx.machine_arch() == 'arm64' else ['cpu']
+    return ['cuda', 'cpu']
+
+
 def recommended_variant(gpu=None):
+    if IS_MAC:
+        return variants()[0]
     gpu = gpu or detect_gpu()
     # cu124 wheels need a CUDA 12.x capable driver (>= 525); otherwise fall back to CPU.
     if gpu['nvidia'] and (gpu['cuda_driver'] >= 12000 or (gpu['cuda_driver'] == 0 and gpu['name'])):
@@ -149,7 +203,8 @@ def plan(variant, man=None, whisper=None):
     dl = os.path.join(h, 'downloads')
     items = [dict(man['python'], dest=os.path.join(dl, man['python']['name']), kind='python', label='Python 3.11 runtime')]
     for w in man['torch'][variant]:
-        items.append(dict(w, dest=os.path.join(dl, w['name']), kind='wheel', label=w['name'].split('-')[0] + ' (' + variant.upper() + ')'))
+        items.append(dict(w, dest=os.path.join(dl, w['name']), kind='wheel',
+                          label=w['name'].split('-')[0] + ' (' + VARIANT_LABEL.get(variant, variant.upper()) + ')'))
     for w in man['wheels']:
         items.append(dict(w, dest=os.path.join(dl, w['name']), kind='wheel', label=w['name'].split('-')[0]))
     wm = {m['name']: m for m in man.get('whisper_models', [])}
@@ -203,7 +258,8 @@ def run(args, timeout=None, **kw):
 def engine_env():
     env = dict(os.environ)
     env.update(PYTHONNOUSERSITE='1', PYTHONIOENCODING='utf-8', PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1',
-               TORCH_HOME=os.path.join(paths.models_dir(), 'torch'), HF_HUB_OFFLINE='1', KMP_DUPLICATE_LIB_OK='TRUE')
+               TORCH_HOME=os.path.join(paths.models_dir(), 'torch'), HF_HUB_OFFLINE='1', KMP_DUPLICATE_LIB_OK='TRUE',
+               PYTORCH_ENABLE_MPS_FALLBACK='1')   # Apple Silicon: ops MPS lacks run on the CPU
     for k in list(env):
         if k in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH', 'TCL_LIBRARY', 'TK_LIBRARY') \
                 or k.startswith('_PYI') or k.startswith('_MEI'):
@@ -296,8 +352,9 @@ class Setup:
         self._done_bytes = {}
 
     def steps(self):
-        check = 'GPU check / warm-up' if self.variant == 'cuda' else 'Engine check / warm-up (CPU)'
-        return [(k, lbl.replace('{V}', self.variant.upper()).replace('{CHECK}', check)) for k, lbl in STEP_DEFS]
+        check = {'cuda': 'GPU check / warm-up', 'mps': 'Apple GPU (Metal) check / warm-up'}.get(self.variant, 'Engine check / warm-up (CPU)')
+        v = VARIANT_LABEL.get(self.variant, self.variant.upper())
+        return [(k, lbl.replace('{V}', v).replace('{CHECK}', check)) for k, lbl in STEP_DEFS]
 
     def step_items(self, sid):
         if sid == 'dl_torch':
@@ -503,6 +560,9 @@ class Setup:
             os.replace(tmp, rt)
             open(os.path.join(rt, 'python', '.complete'), 'w').close()
             self.log('Python unpacked to ' + rt)
+            if IS_MAC:   # the app downloads itself, so nothing is quarantined; checked anyway
+                n = macfx.strip_quarantine(rt)
+                self.log('Quarantine check: %s' % ('%d files had com.apple.quarantine (removed)' % n if n else 'none'))
         done += units['python']
         pipargs = [py, '-m', 'pip', 'install', '--no-index', '--no-deps', '--force-reinstall', '--disable-pip-version-check',
                    '--no-warn-script-location', '--progress-bar', 'off']
@@ -512,8 +572,10 @@ class Setup:
         done += units['torch']
         self.state.update(sid, done=done, indeterminate=True, detail='Installing %d engine packages…' % (len(other_w) + len(local)))
         self._run(pipargs + [i['dest'] for i in other_w] + local, 'Package install', sid)
+        if IS_MAC and macfx.strip_quarantine(rt):
+            self.log('Removed com.apple.quarantine from installed packages')
         self.state.update(sid, status='done', done=total, indeterminate=False, detail='PyTorch %s and %d packages installed' % (
-            self.variant.upper(), len(wheels) + len(local)))
+            VARIANT_LABEL.get(self.variant, self.variant.upper()), len(wheels) + len(local)))
         for w in wheels:  # installed: drop the wheels to save disk (models stay)
             for p in (w['dest'], w['dest'] + '.ok'):
                 try:
@@ -558,6 +620,11 @@ class Setup:
         info = self.check(paths.runtime_python(self.home))
         if info.get('device') == 'cuda':
             d = 'CUDA OK · %s · %s GB' % (info.get('device_name', 'NVIDIA GPU'), ('%g' % info['vram_gb']) if info.get('vram_gb') else '?')
+        elif info.get('device') == 'mps':
+            d = 'Metal (MPS) OK · %s%s' % (info.get('device_name') or 'Apple GPU',
+                                          (' · %g GB unified memory' % info['memory_gb']) if info.get('memory_gb') else '')
+        elif self.variant == 'mps':
+            d = 'CPU OK · %s (Metal needs macOS 12.3 or later; the engine uses the CPU)' % (info.get('device_name') or 'CPU')
         else:
             d = 'CPU OK · %s' % (info.get('device_name') or 'CPU')
             if self.variant == 'cuda':

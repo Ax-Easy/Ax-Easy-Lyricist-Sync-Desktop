@@ -178,7 +178,7 @@ def run_update_test(url, install, report):
         updater.download(bad)
         check('hash mismatch rejected', False, 'downloaded without error')
     except updater.UpdateError as e:
-        leftover = [f for f in os.listdir(updater.updates_dir()) if f.endswith('.exe') or f.endswith('.part')]
+        leftover = [f for f in os.listdir(updater.updates_dir()) if f.endswith(('.exe', '.dmg', '.part'))]
         check('hash mismatch rejected', 'SHA256' in str(e) and not leftover, str(e))
     # non-HTTPS refused outside the test mode
     os.environ['LYRICIST_SYNC_UPDATE_TEST'] = '0'
@@ -191,7 +191,14 @@ def run_update_test(url, install, report):
     check('404 shows the friendly message', r3['status'] == 'notfound' and 'No update information' in d3.head.text(), r3['message'])
     r4 = updater.check(VERSION, 'http://127.0.0.1:9/update.json', timeout=3)
     check('offline shows the friendly message', r4['status'] == 'offline', r4['message'])
-    if install:
+    if install and updater.IS_MAC:
+        path = updater.download(m)
+        try:   # mount, codesign/Team ID/Gatekeeper checks, stage next to this app, swap after this process exits
+            how, info = updater.install_mac(path, relaunch=False)
+            check('DMG verified and the swap staged', how == 'replaced', json.dumps(info)[:400])
+        except updater.UpdateError as e:
+            check('DMG verified and the swap staged', False, str(e))
+    elif install:
         path = updater.download(m)
         log = os.path.join(os.getcwd(), 'update-install.log')
         updater.run_installer(path, relaunch=False, wait=False, extra=['/LOG=%s' % log])

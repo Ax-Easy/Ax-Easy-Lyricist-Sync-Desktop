@@ -9,6 +9,8 @@ datas = [
     ('engine/lyricist_engine.py', 'engine'),
     ('engine/timing.py', 'engine'),
     ('engine/transcribe.py', 'engine'),
+    ('THIRD_PARTY_NOTICES.md', '.'),
+    ('LICENSE', '.'),
 ]
 datas += [(w, 'wheels') for w in glob.glob('wheels/*.whl')]
 

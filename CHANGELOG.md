@@ -39,6 +39,22 @@
 - *Stoned* (Transcribe with large-v3, 25 lines): each line moved 1.0 s late and re-aligned between its neighbours
   came back to its aligned start in all 25 cases (0.00 s off), in 0.03 s per line (median, CPU, cached analysis).
 
+
+### macOS (new)
+- **Lyricist Sync for Mac**: one universal app for Apple Silicon (macOS 11+) and Intel (macOS 12+), signed with
+  the Ax-Easy Developer ID and notarized by Apple, in a drag-to-Applications DMG.
+- The first-run setup (same 7 steps) downloads the PyTorch build for the Mac: Apple Silicon gets PyTorch 2.5.1 with
+  **Metal (MPS)** and an automatic CPU fallback; Intel Macs get PyTorch 2.2.2 on the CPU. The Whisper size follows the
+  unified memory (8 GB small, 16 GB medium, 24 GB large-v3-turbo, 32 GB+ large-v3).
+- Mac conventions: menu bar with About, Check for Updates…, Settings… ⌘, and Quit ⌘Q (asks about unsaved lyrics),
+  ⌘ shortcuts, native traffic lights and full screen (⌃⌘F), ⌫ deletes a line, Reveal in Finder, vibrancy behind the glass.
+- Updates on macOS: the new DMG is checked (SHA-256, code signature, Ax-Easy Team ID, Gatekeeper) and the app is
+  replaced in place, or the DMG opens for a manual drag when that isn't possible.
+
+### Other
+- Audio tags are read with tinytag (MIT) instead of mutagen.
+- LICENSE (all rights reserved, source visible) and THIRD_PARTY_NOTICES.md, also shipped inside the app.
+
 ## 1.3.0 (2026-10-09)
 
 ### Transcribe: no lyrics needed

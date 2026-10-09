@@ -1,13 +1,102 @@
 # Ax-Easy Lyricist Sync
 
-A standalone Windows desktop tool that **auto-syncs pasted lyrics to a song** and exports
-**TTML, LRC, SRT and VTT** in the exact formats of the Ax-Easy Lyricist 1.1.0 WordPress plugin.
-It is a separate app with no link to the plugin. Upload the MP3 and the generated `.ttml` to your web player.
+**Paste the lyrics, drop in the song, get perfectly timed lyric files.**
+Lyricist Sync is a desktop app for **Windows and macOS** that auto-syncs lyrics to a recording, line by line, and
+exports **TTML, LRC, SRT and VTT**. It runs entirely on your computer: vocals are separated with Demucs, listened to
+with Whisper and aligned with Meta's MMS forced aligner, on an NVIDIA GPU, an Apple Silicon GPU or the CPU.
+No account, no upload, no cloud.
+
+![Lyricist Sync after an Auto-sync: song queue, waveform with line markers, timed line list](docs/screenshots/hero-dark.webp)
 
 Made by [Ax-Easy](https://www.ax-easy.com) with the help of [Grok](https://grok.com)
 Inspired by the music of [Monitored](https://www.monitored.gr)
 
----
+## Download
+
+| | File | |
+|---|---|---|
+| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Setup-1.3.1.exe](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Setup-1.3.1.exe) | per-user installer, about 41 MB |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple |
+| **Manual** (English) | [AxEasy-LyricistSync-Manual-EN.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-EN.pdf) | |
+| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Manual-GR.pdf](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-GR.pdf) | |
+
+Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/lyricist-sync/releases).
+
+## Features
+
+- **Auto-sync** pasted lyrics to MP3, WAV, FLAC, M4A, AAC or OGG – Greek and other non-Latin scripts included.
+- **Repeats found by ear**: a chorus written once but sung twice is detected and timed twice.
+- **Transcribe** songs without lyrics: Whisper writes the lines and their times; unsure words are marked amber.
+- **Confidence per line**, with the reason, so you only check the lines that need it.
+- **Review and edit**: a waveform with draggable line markers, a player with 0.5×–1.5× speed, nudge buttons,
+  in-place editing, split / merge / insert, *Re-sync from here*, *Re-align this line*, full undo / redo.
+- **♪ lines** for intros, solos and outros, so a lyric display never shows a stale line.
+- **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT.
+- **Runs locally** on CUDA (NVIDIA), Metal (Apple Silicon) or the CPU; the Whisper size follows your hardware.
+- **Built-in updater** that checks SHA-256 (and, on macOS, the Apple signature) before installing.
+- Native look on each system: Mica on Windows 11, glass on Windows 10, vibrancy and the menu bar on macOS;
+  dark and light themes.
+
+## Gallery
+
+| Dark | Light |
+|---|---|
+| ![Main window after a sync (dark)](docs/screenshots/main-dark.webp) | ![Main window after a sync (light)](docs/screenshots/main-light.webp) |
+| ![Transcribe without lyrics](docs/screenshots/transcribe-dark.webp) | ![Transcribe without lyrics](docs/screenshots/transcribe-light.webp) |
+| ![Edit Line dialog](docs/screenshots/edit-line-dark.webp) | ![Edit Line dialog](docs/screenshots/edit-line-light.webp) |
+| ![Player with the waveform](docs/screenshots/player-dark.webp) | ![Player with the waveform](docs/screenshots/player-light.webp) |
+| ![♪ lines in instrumental parts](docs/screenshots/music-lines-dark.webp) | ![♪ lines in instrumental parts](docs/screenshots/music-lines-light.webp) |
+| ![Engine settings](docs/screenshots/engine-dark.webp) | ![Engine settings](docs/screenshots/engine-light.webp) |
+| ![Export confirmation](docs/screenshots/export-done-dark.webp) | ![Export confirmation](docs/screenshots/export-done-light.webp) |
+
+**macOS**
+
+| Dark | Light |
+|---|---|
+| ![Lyricist Sync on macOS (dark)](docs/screenshots/mac-main-dark.webp) | ![Lyricist Sync on macOS (light)](docs/screenshots/mac-main-light.webp) |
+
+## System requirements
+
+| | Windows | macOS |
+|---|---|---|
+| OS | Windows 10 1809 (build 17763) or later, 64-bit | macOS 11 Big Sur or later on Apple Silicon; macOS 12 Monterey or later on Intel |
+| Engine | NVIDIA GPU with CUDA 12.4 drivers (fastest), or any x86-64 CPU | Apple Silicon: PyTorch with Metal (MPS) and CPU fallback. Intel: PyTorch 2.2.2 on the CPU |
+| Memory | 8 GB RAM; GPU memory decides the Whisper size | 8 GB; unified memory decides the Whisper size (8 GB small, 16 GB medium, 24 GB large-v3-turbo, 32 GB+ large-v3) |
+| Disk | 3.5 GB (CPU) to 7–9 GB (CUDA, large Whisper) after the first-run setup | about 3 GB (Whisper small) to 6.5 GB (large-v3) after the first-run setup |
+| Internet | only for the one-time engine download (2.2–7 GB) and update checks | same (2.0–4.6 GB download) |
+
+## Quick start
+
+1. **Install.**
+   - *Windows*: run the installer (no admin rights needed). It isn't code-signed yet, so SmartScreen may say
+     *"Windows protected your PC"* → **More info → Run anyway**.
+   - *macOS*: open the DMG and drag **Lyricist Sync** onto **Applications**. The app is signed with a Developer ID
+     and notarized by Apple, so it opens without warnings.
+2. **First run**: the setup window downloads the sync engine (Python, PyTorch for your hardware, the Demucs,
+   Whisper and MMS models) into your user folder – 7 steps, each SHA-256 checked, pausable and resumable.
+3. **Add songs** (or drag them onto the window). A `.txt` with the same name next to the audio is loaded as the
+   lyrics; otherwise paste them, one sung line per line.
+4. Press **Auto-sync** (or **Transcribe** when you have no lyrics). Check the amber lines, nudge or edit if needed.
+5. **Export** – TTML, LRC, SRT and VTT next to the audio or in a folder you choose.
+
+The full guide is in the manual ([English](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-EN.pdf) ·
+[Ελληνικά](https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Manual-GR.pdf)) and below.
+
+## On macOS
+
+- One **universal** app for Apple Silicon and Intel; the first-run setup downloads the PyTorch build for your Mac
+  into `~/Library/Application Support/Ax-Easy/LyricistSync` (Apple Silicon: current PyTorch with **Metal / MPS** and an
+  automatic CPU fallback for anything Metal can't run; Intel: PyTorch 2.2.2, the last release for Intel Macs, on the CPU).
+- Mac conventions: the menu bar (**Lyricist Sync ▸ About, Check for Updates…, Settings… ⌘,, Quit ⌘Q** – Quit asks about
+  unsaved lyrics first), **⌘** shortcuts (⌘O add songs, ⌘S export, ⌘R auto-sync, ⇧⌘T transcribe, ⌘Z / ⇧⌘Z undo / redo,
+  ⇧⌘L light / dark), the native traffic-light title bar, full screen with the green button or **⌃⌘F**, **⌫** deletes
+  the selected line, and **Reveal in Finder**.
+- **Updates**: *Check for Updates…* downloads the new DMG, checks its SHA-256, the Apple code signature, the
+  Ax-Easy Team ID (7BMSHL4YZ6) and Gatekeeper, then replaces the app in place and restarts it. If the app can't be
+  replaced where it is (for example a read-only folder), the DMG opens so you can drag the new version to Applications.
+- **Not on the Mac App Store**: App Store apps may not download and run code after installation, and Lyricist Sync's
+  first-run setup downloads its engine (Python and PyTorch) at runtime, sized for each Mac. It is distributed as a
+  notarized DMG instead.
 
 ## How it works
 
@@ -42,6 +131,8 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
 
 ## Using the app
 
+On macOS read **⌘** for Ctrl, **⌫** for Delete, **⌃⌘F** for F11 and **Reveal in Finder** for Open folder.
+
 1. **Add songs** (MP3, WAV, FLAC, M4A, AAC, OGG), or drag files onto the window.
    - If a `.txt` with the same name sits next to the audio, its lyrics load automatically.
    - Otherwise, paste the lyrics into the box with one sung line per line.
@@ -65,7 +156,7 @@ The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU 
      - Transport: **▶ / ❚❚**, **−2 s / +2 s**, speed **0.5×–1.5×**, the time, and **▶ Play from line**. The line
        playing now is highlighted and the list follows it.
      - The song is decoded once to PCM for exact seeking and cached (the last 8 songs) in
-       `%LOCALAPPDATA%\Ax-Easy\LyricistSync\cache\audio`.
+       `%LOCALAPPDATA%\Ax-Easy\LyricistSync\cache\audio` (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync/cache/audio`).
    - **Keyboard** (not while you type in a text box):
 
      | Key | Action |
@@ -163,7 +254,8 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 
 ### Updates
 
-The **Update** button next to About checks `https://www.ax-easy.com/lyricist-sync/update.json`.
+The **Update** button next to About (macOS: *Lyricist Sync ▸ Check for Updates…*) checks
+`https://www.ax-easy.com/lyricist-sync/update.json`.
 - The quiet check on start runs at most once a day, and can be switched off in the update window.
 - The badge dot means a new version is out.
 - **Update now** downloads the installer to `%LOCALAPPDATA%\Ax-Easy\LyricistSync\updates`. The download
@@ -173,18 +265,26 @@ The **Update** button next to About checks `https://www.ax-easy.com/lyricist-syn
   they are.
 - No GitHub API and no tokens are involved.
 
-To publish an update, upload Setup-x.y.z.exe and update.json to /lyricist-sync/ on ax-easy.com
+To publish an update, attach the Setup exe and the DMG to the GitHub release, then upload update.json to
+/lyricist-sync/ on ax-easy.com (its download URLs point at the GitHub release).
 
 CI writes `update.json` next to the installer, with the real SHA256 and size (`tools/make_update_json.py`). Its
 fields are:
 
 ```json
-{"version": "1.3.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.3.0.exe",
- "sha256": "…", "size": 52000000, "minimum_os": "10.0.17763"}
+{"version": "1.3.1", "date": "2026-10-09", "notes": "…",
+ "url": "https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-Setup-1.3.1.exe",
+ "sha256": "…", "size": 41396276, "minimum_os": "10.0.17763",
+ "mac": {"url": "https://github.com/Ax-Easy/lyricist-sync/releases/download/v1.3.1/AxEasy-LyricistSync-1.3.1-mac-universal.dmg",
+         "sha256": "…", "size": 0, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
 ```
+
+The top level is the Windows entry (what every Windows version reads); the macOS app reads `mac` on top of it.
 
 ### Window style
 
+- **macOS**: the native title bar with the traffic lights, an NSVisualEffectView vibrancy backdrop under the glass, and
+  the system menu bar.
 - **Windows 11** (build 22000 or newer): DWM rounded corners and Mica.
 - **Windows 10**: a frameless translucent window. The app paints its own rounded glass (16 px radius, gradient,
   grain and a top highlight) and a soft shadow in a 20 px transparent margin. There is no window-wide acrylic,
@@ -213,7 +313,9 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 - The installer (`AxEasy-LyricistSync-Setup-1.3.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
-- On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`. Every file is
+- macOS: the DMG (about 90 MB) holds the universal app; drag it to Applications.
+- On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`
+  (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync`). Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
   1. Download PyTorch and the packages
   2. Install
@@ -235,6 +337,8 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 |---|---|---|
 | **CUDA 12.4** (picked automatically when an NVIDIA GPU is found) | Python 3.11 (25 MB), PyTorch 2.5.1+cu124 (2.51 GB), 39 engine wheels (104 MB), models | **4.48 GB** with Whisper small · 5.52 GB medium · 5.61 GB large-v3-turbo · **7.08 GB large-v3** (24 GB GPUs) |
 | **CPU** | Same, with PyTorch 2.5.1+cpu (205 MB), Whisper small | **2.17 GB** |
+| **macOS, Apple Silicon** | Python 3.11 (27 MB), PyTorch 2.5.1 with Metal (66 MB), 36 engine wheels (96 MB), models | **2.02 GB** with Whisper small (8 GB Macs) · 3.07 GB medium (16 GB) · 3.16 GB large-v3-turbo (24 GB) · **4.62 GB large-v3** (32 GB+) |
+| **macOS, Intel** | Python 3.11 (27 MB), PyTorch 2.2.2 CPU (154 MB), 35 engine wheels (108 MB), models | **2.11 GB** with Whisper small · 3.16 GB medium (32 GB+) |
 
 The models are Demucs htdemucs (84 MB), MMS_FA (1.26 GB) and one Whisper size: small (484 MB), medium (1.53 GB),
 large-v3-turbo (1.62 GB) or large-v3 (3.09 GB).
@@ -267,15 +371,24 @@ The installer and the app are **not code-signed**, because Windows code signing 
 Azure subscription is stopped). Windows SmartScreen will therefore warn: *"Windows protected your PC"*. Click
 **More info → Run anyway**. Check the SHA256 published next to the installer before running it.
 
-## Licences of the models
+## License
 
-- Demucs and Whisper: MIT.
-- **MMS_FA** (Meta, through torchaudio): **CC-BY-NC 4.0, which means non-commercial use only**. Keep this in mind if
-  the tool or its output is used commercially. A commercial-safe aligner could replace it later.
+**Copyright © 2026 Ax-Easy (Evangelos Makrydakis). All rights reserved.** The source code is published for viewing
+only; you may run the official binaries for personal use. See [LICENSE](LICENSE).
+
+Third-party components keep their own licenses – Whisper (MIT), Demucs (MIT), PyTorch (BSD), PySide6 / Qt
+(LGPL-3.0, dynamically linked and replaceable), uroman (MIT-style, with attribution), and the **MMS_FA alignment
+model (CC BY-NC 4.0, non-commercial)**. Details, versions and your LGPL rights: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Building
 
-GitHub Actions (`.github/workflows/build.yml`) does the build on a `windows-latest` runner:
+**macOS** (`.github/workflows/mac.yml`): a universal2 build (python.org Python 3.12, PySide6 6.7.3) on an Apple
+Silicon runner, every Mach-O signed inside-out with the Developer ID (hardened runtime), notarized and stapled, packed
+into the DMG, then installed from the DMG and tested on **Apple Silicon and Intel** runners: Gatekeeper, self-test,
+the in-app updater, the first-run engine setup and a real sync / transcribe. Signing secrets are only available to
+pushes to this repository and manual runs, never to pull requests from forks.
+
+**Windows**: GitHub Actions (`.github/workflows/build.yml`) does the build on a `windows-latest` runner:
 
 1. Runs the unit tests: exporters, repeats, downloader and timing.
 2. Builds `LyricistSync.exe` with PyInstaller on Python 3.12.
@@ -309,12 +422,12 @@ The `e2e` job then runs on a clean runner:
 Layout:
 
 ```
-app/lyricist_sync/   GUI (PySide6, frameless liquid-glass window), bootstrap/downloader, exporters, CLI
+app/lyricist_sync/   GUI (PySide6; liquid-glass window on Windows, native window on macOS), bootstrap/downloader, exporters, CLI
 engine/              lyricist_engine.py: runs in the downloaded Python (Demucs → Whisper → MMS_FA)
-installer/           Inno Setup script, icon, version info
-tools/               manifest generator and the Windows lock file for the engine
+installer/           Inno Setup script, icon, version info (Windows)
+mac/                 macOS icon, entitlements, signing / notarization scripts, DMG layout
+LyricistSync-mac.spec  PyInstaller spec of the universal2 app
+tools/               manifest generators and the engine lock files (Windows, macOS arm64, macOS Intel)
 tests/               exporter parity, repeat detection, downloader, timing, demo + hard fixtures with known times
 CHANGELOG.md         release notes (also used for update.json)
 ```
-
-© 2026 Ax-Easy. All rights reserved.

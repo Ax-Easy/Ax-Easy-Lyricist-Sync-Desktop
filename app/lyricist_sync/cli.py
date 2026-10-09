@@ -35,7 +35,7 @@ def main(argv=None):
                     '2560×1440 offscreen screens')
     ap.add_argument('--fixture', metavar='DIR', help='folder with demo_*.mp3/.txt/.result.json for --screens')
     ap.add_argument('--setup', action='store_true', help='download and install the engine without the GUI')
-    ap.add_argument('--variant', choices=['auto', 'cuda', 'cpu'], default='auto')
+    ap.add_argument('--variant', choices=['auto', 'cuda', 'mps', 'cpu'], default='auto')
     ap.add_argument('--sync', metavar='AUDIO', nargs='+', help='sync audio files without the GUI')
     ap.add_argument('--transcribe', metavar='AUDIO', nargs='+', help='no lyrics needed: Whisper writes the lines '
                     '(saves AUDIO.transcript.txt and the timed files)')
@@ -138,7 +138,7 @@ def cli_sync(a):
         return 2
     st = bootstrap.state() or {}
     eng = st.get('engine') or {}
-    tier = bootstrap.whisper_tier(eng.get('vram_gb') if eng.get('device') == 'cuda' else None, st.get('variant', 'cpu'))
+    tier = bootstrap.state_tier(st)
     whisper = bootstrap.effective_whisper(a.whisper, tier, bootstrap.whisper_installed())
     mode = 'transcribe' if a.transcribe else 'sync'
     print('Whisper: %s (hardware tier %s)' % (whisper, tier), flush=True)

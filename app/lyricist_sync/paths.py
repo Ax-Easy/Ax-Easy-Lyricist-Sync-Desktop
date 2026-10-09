@@ -10,10 +10,14 @@ def app_dir():
 
 
 def home():
-    """%LOCALAPPDATA%\\Ax-Easy\\LyricistSync (override with LYRICIST_SYNC_HOME)."""
+    """%LOCALAPPDATA%\\Ax-Easy\\LyricistSync on Windows, ~/Library/Application Support/Ax-Easy/LyricistSync
+    on macOS (override with LYRICIST_SYNC_HOME)."""
     h = os.environ.get('LYRICIST_SYNC_HOME')
     if not h:
-        base = os.environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), '.local', 'share')
+        if sys.platform == 'darwin':
+            base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+        else:
+            base = os.environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), '.local', 'share')
         h = os.path.join(base, 'Ax-Easy', 'LyricistSync')
     os.makedirs(h, exist_ok=True)
     return h

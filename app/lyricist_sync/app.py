@@ -257,6 +257,15 @@ class App:
         if os.environ.get('LYRICIST_SYNC_FAKE_VRAM'):   # screenshots/tests
             variant, vram = 'cuda', float(os.environ['LYRICIST_SYNC_FAKE_VRAM'])
             name = os.environ.get('LYRICIST_SYNC_FAKE_GPU', 'NVIDIA GeForce RTX 3090')
+        if bootstrap.IS_MAC and not os.environ.get('LYRICIST_SYNC_FAKE_VRAM'):
+            # Mac: Apple Silicon (MPS, tiered by unified memory) or Intel (CPU, tiered by RAM)
+            from . import macfx
+            variant = st.get('variant') or bootstrap.recommended_variant()
+            mem = float(os.environ.get('LYRICIST_SYNC_FAKE_MEM') or eng.get('memory_gb') or macfx.memory_gb() or 0)
+            chip = eng.get('device_name') or macfx.chip_name()
+            return {'variant': variant, 'gpu': chip if variant == 'mps' else None, 'vram_gb': mem, 'memory_gb': mem,
+                    'device': eng.get('device') or '', 'cpu': chip, 'mac': True,
+                    'tier': bootstrap.whisper_tier(mem, bootstrap.tier_variant(variant))}
         return {'variant': variant, 'gpu': name, 'vram_gb': vram, 'cpu': eng.get('device_name') if eng.get('device') == 'cpu' else '',
                 'tier': bootstrap.whisper_tier(vram, variant)}
 
@@ -634,6 +643,23 @@ class App:
         QTimer.singleShot(200, self.qapp.quit)
 
 
+def _install_file_open_handler(qapp, app):
+    """macOS: files dropped on the Dock icon or opened with "Open With" arrive as QFileOpenEvent (not argv)."""
+    from PySide6.QtCore import QEvent, QObject
+
+    class _Opener(QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() == QEvent.FileOpen:
+                f = ev.file()
+                if f and os.path.isfile(f):
+                    QTimer.singleShot(0, lambda: app.add_songs([f]))
+                return True
+            return False
+
+    qapp._file_opener = _Opener(qapp)
+    qapp.installEventFilter(qapp._file_opener)
+
+
 def run_gui(argv):
     qapp = QApplication.instance() or QApplication(argv)
     qapp.setApplicationName('Ax-Easy Lyricist Sync')
@@ -641,6 +667,8 @@ def run_gui(argv):
     from PySide6.QtGui import QIcon
     qapp.setWindowIcon(QIcon(paths.resource('res', 'icon.svg')))
     app = App(qapp)
+    if sys.platform == 'darwin':
+        _install_file_open_handler(qapp, app)
     app.win.show()
     files = [a for a in argv[1:] if os.path.isfile(a)]
     if files:

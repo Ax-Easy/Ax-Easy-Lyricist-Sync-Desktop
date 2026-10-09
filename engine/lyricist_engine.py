@@ -3,7 +3,7 @@
 Runs inside the downloaded runtime (Python 3.11 + PyTorch); the GUI talks to it over
 JSON lines:  stdin  {"cmd": "sync", "id": ..., "audio": ..., "lines": [...], "lang": "el"|null, "iso": "ell"|""}
              stdout {"event": "hello"|"progress"|"result"|"error"|"log", ...}
-Usage: python lyricist_engine.py --models DIR [--device auto|cuda|cpu] (serve|check|sync AUDIO LYRICS.txt OUT.json)
+Usage: python lyricist_engine.py --models DIR [--device auto|cuda|mps|cpu] (serve|check|sync AUDIO LYRICS.txt OUT.json)
 """
 import argparse, difflib, io, json, math, os, re, sys, threading, time, traceback, unicodedata
 
@@ -257,16 +257,22 @@ class Engine:
         self.cache = cache or os.path.join(os.path.dirname(os.path.abspath(models)), 'cache')
         os.environ.setdefault('TORCH_HOME', os.path.join(models, 'torch'))
         if device == 'auto':
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            device = 'cuda' if torch.cuda.is_available() else 'mps' if _mps_ok(torch) else 'cpu'
         if device == 'cuda' and not torch.cuda.is_available():
             log('CUDA requested but not available; using CPU')
             device = 'cpu'
+        if device == 'mps' and not _mps_ok(torch):
+            log('MPS requested but not available (needs Apple Silicon and macOS 12.3+); using CPU')
+            device = 'cpu'
         self.device = device
-        if device == 'cpu':
+        # Apple Silicon: each stage runs on the GPU (MPS); a stage whose ops MPS cannot run falls
+        # back to the CPU for the rest of the session (logged), so a song never fails because of MPS.
+        self.stage_device = {}
+        if device in ('cpu', 'mps'):
             torch.set_num_threads(max(1, os.cpu_count() or 1))
         self.stem = self._pick_stem()
         self._demucs = self._whisper = self._mms = None
-        self._whisper_name = None
+        self._whisper_name = self._whisper_dev = None
         self.whisper_want = os.environ.get('LYRICIST_SYNC_WHISPER') or 'small'
 
     def _pick_stem(self):
@@ -281,9 +287,44 @@ class Engine:
     def info(self):
         t = self.torch
         name = t.cuda.get_device_name(0) if self.device == 'cuda' else (platform_cpu() or 'CPU')
-        return {'device': self.device, 'device_name': name, 'torch': t.__version__, 'stem': self.stem,
-                'cuda': t.version.cuda if self.device == 'cuda' else None,
-                'vram_gb': round(t.cuda.get_device_properties(0).total_memory / 2**30, 1) if self.device == 'cuda' else None}
+        d = {'device': self.device, 'device_name': name, 'torch': t.__version__, 'stem': self.stem,
+             'cuda': t.version.cuda if self.device == 'cuda' else None,
+             'vram_gb': round(t.cuda.get_device_properties(0).total_memory / 2**30, 1) if self.device == 'cuda' else None}
+        if sys.platform == 'darwin':
+            d['memory_gb'] = mac_memory_gb()
+            d['mps_built'] = bool(getattr(t.backends, 'mps', None) and t.backends.mps.is_built())
+        return d
+
+    # -- per-stage device (MPS with a CPU fallback)
+    def dev(self, stage):
+        return self.stage_device.get(stage, self.device)
+
+    def on_mps_failure(self, stage, err):
+        """An op MPS can't run (or a Metal out-of-memory): this stage moves to the CPU."""
+        log('MPS failed in %s (%s: %s); using the CPU for %s from now on' % (stage, err.__class__.__name__, str(err)[:300], stage))
+        self.stage_device[stage] = 'cpu'
+        try:
+            self.torch.mps.empty_cache()
+        except Exception:
+            pass
+
+    def run_stage(self, stage, fn):
+        """fn() on this stage's device; on an MPS error once more on the CPU."""
+        if self.dev(stage) != 'mps':
+            return fn()
+        try:
+            return fn()
+        except Exception as e:   # RuntimeError / NotImplementedError from the MPS backend
+            if isinstance(e, (KeyboardInterrupt, MemoryError)):
+                raise
+            self.on_mps_failure(stage, e)
+            if stage == 'separate':
+                self._demucs = None
+            elif stage == 'whisper':
+                self._whisper = None
+            elif stage == 'mms':
+                self._mms = None
+            return fn()
 
     # -- models
     def demucs(self):
@@ -296,7 +337,7 @@ class Engine:
                 with open(y, 'w') as f:
                     f.write(STEMS[self.stem][0])
             m = get_model(self.stem, repo=Path(d))
-            self._demucs = m.to(self.device).eval()
+            self._demucs = m.to(self.dev('separate')).eval()
         return self._demucs
 
     def whisper_installed(self):
@@ -313,7 +354,7 @@ class Engine:
 
     def whisper(self, want=None):
         name = self.whisper_name(want)
-        if self._whisper is not None and self._whisper_name != name:
+        if self._whisper is not None and (self._whisper_name != name or self._whisper_dev != self.dev('whisper')):
             self._whisper = None  # one Whisper model in memory at a time
             import gc
             gc.collect()
@@ -324,9 +365,22 @@ class Engine:
             path = os.path.join(self.models, 'whisper', name + '.pt')
             if not os.path.exists(path):
                 raise RuntimeError('Whisper model "%s" is not installed. Open Engine settings to download it.' % name)
-            log('loading Whisper %s on %s' % (name, self.device))
-            self._whisper = whisper.load_model(path, device=self.device)
+            dev = self.dev('whisper')
+            log('loading Whisper %s on %s' % (name, dev))
+            if dev == 'mps':
+                _patch_whisper_for_mps()
+                # Whisper keeps its alignment heads as a sparse tensor, which MPS can't hold: load on the
+                # CPU, move the weights, and keep that one buffer on the CPU (it is only read as indices).
+                m = whisper.load_model(path, device='cpu')
+                heads = m._buffers.pop('alignment_heads', None)
+                m = m.to('mps')
+                if heads is not None:
+                    m._buffers['alignment_heads'] = heads
+                self._whisper = m
+            else:
+                self._whisper = whisper.load_model(path, device=dev)
             self._whisper_name = name
+            self._whisper_dev = dev
         return self._whisper
 
     def mms(self):
@@ -334,7 +388,7 @@ class Engine:
             import torchaudio
             b = torchaudio.pipelines.MMS_FA
             vocab = b.get_dict(star='*')
-            self._mms = (b, b.get_model(with_star=True).to(self.device).eval(), vocab, vocab['*'])
+            self._mms = (b, b.get_model(with_star=True).to(self.dev('mms')).eval(), vocab, vocab['*'])
         return self._mms
 
     # -- steps
@@ -354,16 +408,20 @@ class Engine:
         return self.torch.from_numpy(a)
 
     def separate(self, wav, cb):
+        return self.run_stage('separate', lambda: self._separate(wav, cb))
+
+    def _separate(self, wav, cb):
         import demucs.apply as dapply
         model = self.demucs()
+        dev = self.dev('separate')
         old = dapply.tqdm
         dapply.tqdm = _TqdmModule(cb)
         try:
             ref = wav.mean(0)
             mean, std = ref.mean(), ref.std() + 1e-8
-            x = ((wav - mean) / std).to(self.device)
+            x = ((wav - mean) / std).to(dev)
             with self.torch.inference_mode():
-                src = dapply.apply_model(model, x[None], device=self.device, shifts=1, split=True, overlap=0.25,
+                src = dapply.apply_model(model, x[None], device=dev, shifts=1, split=True, overlap=0.25,
                                          progress=True, num_workers=0)[0]
             vocals = src[model.sources.index('vocals')] * std + mean
         finally:
@@ -371,13 +429,16 @@ class Engine:
         return vocals.float().cpu()
 
     def transcribe(self, vocals16, lang, cb):
+        return self.run_stage('whisper', lambda: self._transcribe(vocals16, lang, cb))
+
+    def _transcribe(self, vocals16, lang, cb):
         import whisper  # noqa: F401
         wt = sys.modules['whisper.transcribe']  # the package attribute is shadowed by the function
         old = wt.tqdm
         wt.tqdm = _TqdmModule(cb)
         try:
             r = self.whisper(self.whisper_want).transcribe(vocals16.numpy(), language=lang, word_timestamps=True,
-                                          condition_on_previous_text=False, fp16=(self.device == 'cuda'), verbose=False)
+                                          condition_on_previous_text=False, fp16=(self.dev('whisper') == 'cuda'), verbose=False)
         finally:
             wt.tqdm = old
         words = [(w['word'], round(w['start'], 2), round(w['end'], 2)) for s in r['segments'] for w in s.get('words', [])]
@@ -386,6 +447,9 @@ class Engine:
     def detect_language(self, v16, vad):
         """Whisper language detection on the 30 s with the most singing (not the first 30 s of the
         file, which is often an instrumental intro)."""
+        return self.run_stage('whisper', lambda: self._detect_language(v16, vad))
+
+    def _detect_language(self, v16, vad):
         import whisper
         model = self.whisper(self.whisper_want)
         regs = vad.regions()
@@ -397,8 +461,8 @@ class Engine:
             if cov > best:
                 best, best_t = cov, t0
         seg = v16[int(best_t * 16000):int(best_t * 16000) + 30 * 16000]
-        mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(seg.float()), n_mels=model.dims.n_mels).to(self.device)
-        if self.device == 'cuda':
+        mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(seg.float()), n_mels=model.dims.n_mels).to(self.dev('whisper'))
+        if self.dev('whisper') == 'cuda':
             mel = mel.half()
         _tok, probs = model.detect_language(mel)
         top = sorted(probs, key=probs.get, reverse=True)[:4]
@@ -409,6 +473,13 @@ class Engine:
 
     def transcribe_full(self, v16, vad, lang, cb):
         """Transcribe mode: Whisper with hallucination guards -> (kept segments, dropped, language)."""
+        if not lang:
+            lang, conf = self.detect_language(v16, vad)
+            res = self.run_stage('whisper', lambda: self._transcribe_full(v16, vad, lang, cb))
+            return res[0], res[1], res[2], conf
+        return self.run_stage('whisper', lambda: self._transcribe_full(v16, vad, lang, cb))
+
+    def _transcribe_full(self, v16, vad, lang, cb):
         import whisper  # noqa: F401
         regs = vad.regions()
         dur = v16.shape[0] / 16000
@@ -435,7 +506,7 @@ class Engine:
                 condition_on_previous_text=False, temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
                 compression_ratio_threshold=2.4, logprob_threshold=-1.0, no_speech_threshold=0.6,
                 clip_timestamps=flat, hallucination_silence_threshold=2.0,
-                fp16=(self.device == 'cuda'), verbose=None)
+                fp16=(self.dev('whisper') == 'cuda'), verbose=None)
         finally:
             wt.tqdm = old
         segs = [{'start': float(s['start']), 'end': float(s['end']), 'text': s['text'], 'avg_logprob': float(s['avg_logprob']),
@@ -450,6 +521,9 @@ class Engine:
 
     def emissions(self, vocals16, cb):
         """MMS_FA log-probs [frames, vocab+star] on 16 kHz mono vocals, 30 s chunks with 2 s context."""
+        return self.run_stage('mms', lambda: self._emissions(vocals16, cb))
+
+    def _emissions(self, vocals16, cb):
         torch = self.torch
         bundle, model, _vocab, _star = self.mms()
         SR = bundle.sample_rate
@@ -461,7 +535,7 @@ class Engine:
         with torch.inference_mode():
             while pos < n:
                 a, b = max(0, pos - ctx), min(n, pos + chunk + ctx)
-                em, _ = model(wav[:, a:b].to(self.device))
+                em, _ = model(wav[:, a:b].to(self.dev('mms')))
                 fps = em.shape[1] / ((b - a) / SR)
                 s_off = round((pos - a) / SR * fps)
                 e_off = s_off + round((min(n, pos + chunk) - pos) / SR * fps)
@@ -800,9 +874,47 @@ def vocal_regions(vad):
 def platform_cpu():
     try:
         import platform
+        if sys.platform == 'darwin':   # "Apple M2 Pro" / "Intel(R) Core(TM) i7-..." rather than "arm"/"i386"
+            import subprocess
+            n = subprocess.run(['/usr/sbin/sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True,
+                               timeout=5).stdout.strip()
+            if n:
+                return n
         return platform.processor() or platform.machine()
     except Exception:
         return ''
+
+
+def mac_memory_gb():
+    try:
+        import subprocess
+        return round(int(subprocess.run(['/usr/sbin/sysctl', '-n', 'hw.memsize'], capture_output=True, text=True,
+                                        timeout=5).stdout.strip()) / 2 ** 30, 1)
+    except Exception:
+        return None
+
+
+def _patch_whisper_for_mps():
+    """Word timestamps: Whisper's DTW converts the attention matrix to float64, which MPS can't
+    hold; do that conversion on the CPU (where the DTW runs anyway)."""
+    import whisper.timing as wt
+    if getattr(wt, '_lsync_mps', False):
+        return
+    orig = wt.dtw
+
+    def dtw(x):
+        return orig(x.cpu() if getattr(x, 'device', None) is not None and x.device.type == 'mps' else x)
+    wt.dtw = dtw
+    wt._lsync_mps = True
+
+
+def _mps_ok(torch):
+    if os.environ.get('LYRICIST_SYNC_NO_MPS') == '1':
+        return False
+    try:
+        return bool(torch.backends.mps.is_available())
+    except Exception:
+        return False
 
 
 def main():
