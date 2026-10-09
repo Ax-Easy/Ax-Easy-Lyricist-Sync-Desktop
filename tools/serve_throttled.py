@@ -42,6 +42,14 @@ def make_handler(root, rate, slow):
                     self.wfile.write(body)
                 return
             size = os.path.getsize(p)
+            st = os.stat(p)
+            etag = '"%x-%x"' % (int(st.st_mtime), size)
+            if self.headers.get('If-None-Match') == etag:   # like GitHub's API: 304 for an unchanged answer
+                self.send_response(304)
+                self.send_header('ETag', etag)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             start, end = 0, size - 1
             m = re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range', ''))
             if m:
@@ -59,6 +67,7 @@ def make_handler(root, rate, slow):
                 self.send_response(200)
             self.send_header('Content-Type', 'application/json' if name.endswith('.json') else 'application/octet-stream')
             self.send_header('Content-Length', str(end - start + 1))
+            self.send_header('ETag', etag)
             self.send_header('Accept-Ranges', 'bytes')
             self.end_headers()
             if head:

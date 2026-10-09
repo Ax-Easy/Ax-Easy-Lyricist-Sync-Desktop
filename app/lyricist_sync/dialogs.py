@@ -686,10 +686,10 @@ class UpdateDialog(GlassDialog):
         self.notes.hide()
         self.info.setText('')
         self._set_buttons('checking')
-        url = updater.manifest_url(self.app.settings)
+        settings = dict(self.app.settings)
 
         def work():
-            self.br.checked.emit(updater.check(meta.VERSION, url))
+            self.br.checked.emit(updater.check_for(meta.VERSION, settings))
         if sync:
             work()
             return

@@ -615,8 +615,8 @@ class App:
     def quiet_update_check(self):
         if self.screenshot or not updater.due(self.settings):
             return
-        url = updater.manifest_url(self.settings)
-        threading.Thread(target=lambda: self._upd.checked.emit(updater.check(meta.VERSION, url)), daemon=True).start()
+        settings = dict(self.settings)
+        threading.Thread(target=lambda: self._upd.checked.emit(updater.check_for(meta.VERSION, settings)), daemon=True).start()
 
     def _quiet_checked(self, r):
         if r['status'] in ('available', 'current'):

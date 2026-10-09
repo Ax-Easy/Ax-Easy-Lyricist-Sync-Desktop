@@ -293,6 +293,37 @@ def run(report_path=None):
                 nm = updater.check(VERSION, base + 'nomac.json')['status']
                 assert nm == 'notfound', 'manifest without a mac entry: %s' % nm
             out['offline'] = updater.check(VERSION, 'http://127.0.0.1:9/update.json', timeout=3)['status']
+            # GitHub Releases (the default source): a local copy of the "releases/latest" answer
+            gh_name = 'AxEasy-1.0-mac-universal.dmg' if updater.IS_MAC else 'AxEasy-LyricistSync-Desktop-Setup-9.9.9.exe'
+            with open(os.path.join(srv_dir, gh_name), 'wb') as f:
+                f.write(payload)
+            for rel_name, sums in (('latest', man['sha256']), ('badsums', '0' * 64)):
+                rd = os.path.join(srv_dir, 'repos', 'o', rel_name, 'releases')
+                os.makedirs(rd, exist_ok=True)
+                with open(os.path.join(srv_dir, rel_name + '.sums'), 'w') as f:
+                    f.write('%s  %s\n' % (sums, gh_name))
+                rel = {'tag_name': 'v9.9.9', 'draft': False, 'prerelease': False, 'body': '## 9.9.9\n- test',
+                       'published_at': '2026-10-09T12:00:00Z',
+                       'assets': [{'name': gh_name, 'size': len(payload), 'browser_download_url': base + gh_name},
+                                  {'name': 'SHA256SUMS', 'size': 100, 'browser_download_url': base + rel_name + '.sums'}]}
+                with open(os.path.join(rd, 'latest'), 'w') as f:
+                    json.dump(rel, f)
+            gh = updater.check(VERSION, base + 'repos/o/latest/releases/latest')
+            out['gh_available'] = gh['status']
+            assert gh['status'] == 'available' and gh['manifest']['sha256'] == man['sha256'] and gh['manifest']['notes'].startswith('## 9.9.9'), gh
+            path = updater.download(gh['manifest'])
+            assert os.path.basename(path) == gh_name and os.path.getsize(path) == len(payload), path
+            os.remove(path)
+            bad = updater.check(VERSION, base + 'repos/o/badsums/releases/latest')
+            try:
+                updater.download(bad['manifest'])
+                out['gh_badsums'] = 'accepted'
+            except updater.UpdateError:
+                out['gh_badsums'] = 'rejected'
+            # the update.json fallback is used only when configured and GitHub can't answer
+            fb = updater.check(VERSION, 'http://127.0.0.1:9/repos/a/b/releases/latest', timeout=3, fallback=base + 'update.json')
+            out['fallback'] = '%s/%s' % (fb['status'], fb.get('source'))
+            out['default_source'] = updater.api_url({}) == updater.GITHUB_API and updater.manifest_url({}) == ''
             path = updater.download(man)
             out['download'] = os.path.getsize(path) == len(payload)
             os.remove(path)
@@ -311,7 +342,9 @@ def run(report_path=None):
             else:
                 os.environ['LYRICIST_SYNC_UPDATE_TEST'] = old
         assert out == {'available': 'available', 'current': 'current', 'notfound': 'notfound', 'offline': 'offline',
-                       'download': True, 'mismatch': 'rejected', 'insecure': 'insecure', 'ftp': False}, out
+                       'download': True, 'mismatch': 'rejected', 'insecure': 'insecure', 'ftp': False,
+                       'gh_available': 'available', 'gh_badsums': 'rejected', 'fallback': 'available/manifest',
+                       'default_source': True}, out
         from .dialogs import UpdateDialog
         d = UpdateDialog(ctx['app'].win, ctx['app'], {'status': 'notfound', 'message': 'x', 'manifest': None})
         d.show()

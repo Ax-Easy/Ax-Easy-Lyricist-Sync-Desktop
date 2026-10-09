@@ -50,6 +50,7 @@ jobs:
           python tests/test_tiers.py -v
           python tests/test_transcribe.py -v
           python tests/test_edits.py -v
+          python tests/test_updater.py -v
 
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
@@ -111,8 +112,6 @@ jobs:
           $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
           "$h  $($f.Name)" | Out-File -Encoding ascii "$($f.FullName).sha256"
           "Installer: $($f.Name) $($f.Length) bytes sha256=$h"
-          python tools/make_update_json.py $f.FullName --out dist-installer\update.json
-          if ($LASTEXITCODE -ne 0) { throw "update.json failed" }
 
       - name: Silent install, self-test the installed app, silent uninstall
         shell: pwsh
@@ -131,7 +130,7 @@ jobs:
           if (Test-Path "$dir\LyricistSync.exe") { throw "uninstall left the app behind" }
           "install/selftest/uninstall OK"
 
-      - name: In-app updater end to end (local server offers a fake 9.9.9 = this installer)
+      - name: In-app updater end to end (local mock of the GitHub releases API offers a fake v9.9.9 = this installer)
         shell: pwsh
         run: |
           $f = Get-ChildItem dist-installer\*.exe | Select-Object -First 1
@@ -145,11 +144,13 @@ jobs:
           '{"save_mode": "folder", "out_dir": "C:\\Lyrics", "update_check": true}' | Out-File -Encoding utf8 "$h\settings.json"
           New-Item -ItemType Directory -Force www | Out-Null
           Copy-Item $f.FullName www\
-          python tools/make_update_json.py "www\$($f.Name)" --version 9.9.9 --notes "- CI test release" --base http://127.0.0.1:8766/ --out www\update.json
+          python tools/make_mock_release.py www "www\$($f.Name)" --version 9.9.9 --base http://127.0.0.1:8766/
+          if ($LASTEXITCODE -ne 0) { throw "mock release failed" }
           $srv = Start-Process python -ArgumentList 'tools/serve_throttled.py','www','--port','8766','--rate','40' -PassThru -NoNewWindow
-          Start-Sleep 2
+          $api = 'http://127.0.0.1:8766/repos/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest'
+          for ($i = 0; $i -lt 60; $i++) { try { Invoke-WebRequest $api -UseBasicParsing -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 1 } }
           $env:LYRICIST_SYNC_UPDATE_TEST = '1'
-          $p = Start-Process "$dir\LyricistSync.exe" -ArgumentList '--update-test','http://127.0.0.1:8766/update.json','--install','--report','update-test.json' -Wait -PassThru -NoNewWindow
+          $p = Start-Process "$dir\LyricistSync.exe" -ArgumentList '--update-test',$api,'--install','--report','update-test.json' -Wait -PassThru -NoNewWindow
           Get-Content update-test.json
           if ($p.ExitCode -ne 0) { throw "update test failed" }
           # the app started the installer (/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS) and quit
@@ -176,7 +177,6 @@ jobs:
           path: |
             dist-installer/*.exe
             dist-installer/*.sha256
-            dist-installer/update.json
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
