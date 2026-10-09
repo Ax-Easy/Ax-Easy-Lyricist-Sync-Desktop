@@ -50,7 +50,7 @@ def run(report_path=None):
     def packaging():
         eng = paths.engine_script()
         assert os.path.isfile(eng), eng
-        for f in ('timing.py',):  # modules the engine imports from its own folder
+        for f in ('timing.py', 'transcribe.py'):  # modules the engine imports from its own folder
             assert os.path.isfile(os.path.join(os.path.dirname(eng), f)), 'engine/%s not packaged' % f
         out = {'engine': eng}
         if getattr(sys, 'frozen', False):
@@ -532,6 +532,93 @@ def run(report_path=None):
         out['healed'] = getattr(win, '_healed', 0)
         return out
     check('maximize', maximize)
+
+    def tiers():
+        out = {}
+        for gb, want in ((None, 'small'), (4.0, 'small'), (8.0, 'medium'), (12.0, 'large-v3-turbo'), (16.0, 'large-v3-turbo'),
+                         (23.7, 'large-v3'), (24.0, 'large-v3')):
+            got = bootstrap.whisper_tier(gb, 'cuda')
+            assert got == want, (gb, got)
+            out[str(gb)] = got
+        assert bootstrap.whisper_tier(24.0, 'cpu') == 'small'
+        assert bootstrap.parse_smi('NVIDIA GeForce RTX 3090, 591.44, 24576')['vram_gb'] == 24.0
+        sizes = {n: m['size'] for n, m in bootstrap.whisper_models().items()}
+        assert list(sizes) == ['small', 'medium', 'large-v3-turbo', 'large-v3'], sizes
+        for t in sizes:
+            wh = [i for i in bootstrap.plan('cuda', whisper=t) if i['kind'] == 'model' and bootstrap.model_group(i) == 'whisper']
+            assert len(wh) == 1 and wh[0]['size'] == sizes[t]
+        return out
+    check('whisper_tiers', tiers)
+
+    def transcribe_ui():
+        from .widgets import WORDS_ROLE
+        app, win = ctx['app'], ctx['app'].win
+        s = app.current()
+        s.lyrics, s.result = '', None
+        win.show_song(s)
+        assert win.btn_sync.isEnabled() and win.btn_tr.isEnabled() and win.btn_sync.text() == 'Transcribe + sync'
+        jobs = []
+
+        class FakeEngine:
+            def submit(self, job):
+                jobs.append(job)
+        app.ensure_engine = lambda: True
+        real_engine, app.engine = app.engine, FakeEngine()
+        app.sync_current()                       # no lyrics: Auto-sync transcribes
+        app.engine = real_engine
+        assert jobs and jobs[0]['cmd'] == 'transcribe' and jobs[0]['whisper'], jobs
+        res = {'mode': 'transcribe', 'language': 'el', 'whisper': 'small', 'duration': 15.0, 'vocals': [[3.9, 12.0]],
+               'low_conf': 1, 'version': 3, 'device': 'cpu', 'timings': {}, 'dropped': [],
+               'lines': [{'idx': 0, 'text': 'Καλησπέρα κόσμε', 'start': 4.0, 'end': 5.2, 'conf': 0.93, 'why': [],
+                          'words': [['Καλησπέρα', 4.0, 4.6, 0.95], ['κόσμε', 4.6, 5.2, 0.91]]},
+                         {'idx': 1, 'text': 'Ο ήλιος ανατέλει πάλη', 'start': 6.3, 'end': 8.0, 'conf': 0.52, 'why': ['unsure words: ανατέλει, πάλη'],
+                          'words': [['Ο', 6.3, 6.4, 0.9], ['ήλιος', 6.4, 6.9, 0.88], ['ανατέλει', 6.9, 7.5, 0.31], ['πάλη', 7.5, 8.0, 0.22]]}]}
+        res['text'] = '\n'.join(l['text'] for l in res['lines'])
+        app._result(s.id, res)
+        assert s.lyrics == res['text'] and s.status.startswith('Transcribed'), (s.lyrics, s.status)
+        assert win.lyrics.toPlainText() == res['text']
+        sung = [r for r in range(win.review.rowCount()) if win.review.item(r, 1).data(Qt.UserRole + 1) != 'inst']
+        words = win.review.item(sung[1], 1).data(WORDS_ROLE)
+        assert words and [w for w, low in words if low] == ['ανατέλει', 'πάλη'], words
+        assert win.review.item(sung[0], 1).data(WORDS_ROLE) is None
+        assert win.review.item(sung[1], 4).text() == '● check'
+        amber = [sel.cursor.selectedText() for sel in win.lyrics.extraSelections()]
+        assert amber == ['ανατέλει', 'πάλη'], amber
+        win.review.viewport().repaint()          # the delegate paints the amber words
+        assert win.btn_sync.text() == 'Auto-sync'
+        jobs.clear()
+        app.engine = FakeEngine()
+        app.busy, app.queue = False, []
+        app.sync_current()                       # fix the words, then Auto-sync aligns the text
+        app.engine = real_engine
+        assert jobs and jobs[0]['cmd'] == 'sync' and jobs[0]['lines'][1] == 'Ο ήλιος ανατέλει πάλη', jobs
+        app.busy, app.queue = False, []
+        return {'amber_words': amber, 'jobs': ['transcribe', 'sync']}
+    check('transcribe_ui', transcribe_ui)
+
+    def engine_dialog():
+        from .dialogs import EngineDialog
+        app = ctx['app']
+        os.environ['LYRICIST_SYNC_FAKE_VRAM'] = '24'
+        try:
+            hw = app.hardware()
+            assert hw['tier'] == 'large-v3' and hw['variant'] == 'cuda', hw
+            dlg = EngineDialog(app.win, app)
+            dlg.show()
+            pump(0.2)
+            items = [dlg.combo.itemData(i) for i in range(dlg.combo.count())]
+            assert items == ['auto', 'small', 'medium', 'large-v3-turbo', 'large-v3'], items
+            assert 'large-v3' in dlg.combo.itemText(0)
+            assert 'GB' in dlg.combo.itemText(4) and 'accuracy' in dlg.combo.itemText(4)
+            dlg.combo.setCurrentIndex(3)
+            assert dlg.btn_dl.isVisible() and 'large-v3-turbo' in dlg.btn_dl.text()
+            dlg.combo.setCurrentIndex(0)
+            dlg.timer.stop()
+            dlg.done(0)
+        finally:
+            os.environ.pop('LYRICIST_SYNC_FAKE_VRAM', None)
+        return {'tier': hw['tier'], 'items': items}
+    check('engine_dialog', engine_dialog)
 
     ok = all(c['ok'] for c in checks)
     rep = {'version': VERSION, 'ok': ok, 'frozen': bool(getattr(sys, 'frozen', False)), 'checks': checks}

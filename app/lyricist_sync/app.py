@@ -42,6 +42,7 @@ class Song:
         self.status = 'Ready' if self.lyrics.strip() else 'Needs lyrics'
         self.result = None
         self.dirty = False
+        self.job = 'sync'            # what the queued run does: 'sync' or 'transcribe'
 
     def label(self):
         t = self.tags.get('title') or os.path.splitext(os.path.basename(self.path))[0]
@@ -62,7 +63,8 @@ class App:
         self.settings = {'dark': None, 'out_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'Lyricist Sync'),
                          'save_mode': 'beside', 'song_dirs': {},
                          'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False,
-                         'update_check': True, 'update_last': 0, 'update_skip': ''}
+                         'update_check': True, 'update_last': 0, 'update_skip': '',
+                         'whisper_model': 'auto', 'whisper_asked': ''}
         self.settings.update(instrumental.DEFAULTS)
         self.update_state = None
         self._upd = _UpdSignal()
@@ -163,18 +165,83 @@ class App:
 
     def sync_current(self):
         s = self.current()
-        if s:
+        if not s:
+            return
+        if split_lines(s.lyrics):
             self._start([s])
+        else:   # no lyrics yet: transcribe, then the user fixes the words and syncs
+            self._start([s], 'transcribe')
 
     def sync_all(self):
         self._start([s for s in self.songs if split_lines(s.lyrics)])
 
-    def _start(self, songs):
-        songs = [s for s in songs if split_lines(s.lyrics)]
+    def transcribe_current(self):
+        s = self.current()
+        if s:
+            if split_lines(s.lyrics) and s.lyrics_src != 'transcribe' and not self.win.confirm(
+                    'Transcribe', 'Replace the lyrics of this song with what Whisper hears?\n'
+                    'Your current text is kept in the undo history of the lyrics box (Ctrl+Z).'):
+                return
+            self._start([s], 'transcribe')
+
+    def transcribe_all(self):
+        self._start([s for s in self.songs if not split_lines(s.lyrics)], 'transcribe')
+
+    # ---------------------------------------------------------------- Whisper model (Engine settings)
+    def hardware(self):
+        """{'variant', 'gpu' name, 'vram_gb', 'tier'} from the engine check (state.json) or nvidia-smi."""
+        st = bootstrap.state() or {}
+        eng = st.get('engine') or self.engine_info or {}
+        variant = st.get('variant') or ('cuda' if eng.get('device') == 'cuda' else 'cpu')
+        vram = eng.get('vram_gb') if eng.get('device') == 'cuda' else None
+        name = eng.get('device_name') if eng.get('device') == 'cuda' else None
+        if variant == 'cuda' and not vram:
+            g = getattr(self, '_gpu', None) or bootstrap.detect_gpu()
+            self._gpu = g
+            vram, name = g.get('vram_gb'), name or g.get('name')
+        if os.environ.get('LYRICIST_SYNC_FAKE_VRAM'):   # screenshots/tests
+            variant, vram = 'cuda', float(os.environ['LYRICIST_SYNC_FAKE_VRAM'])
+            name = os.environ.get('LYRICIST_SYNC_FAKE_GPU', 'NVIDIA GeForce RTX 3090')
+        return {'variant': variant, 'gpu': name, 'vram_gb': vram, 'cpu': eng.get('device_name') if eng.get('device') == 'cpu' else '',
+                'tier': bootstrap.whisper_tier(vram, variant)}
+
+    def whisper_effective(self):
+        hw = self.hardware()
+        return bootstrap.effective_whisper(self.settings.get('whisper_model'), hw['tier'], bootstrap.whisper_installed())
+
+    def open_engine(self, download=None):
+        from .dialogs import EngineDialog
+        dlg = EngineDialog(self.win, self, download=download)
+        dlg.exec()
+
+    def offer_tier_upgrade(self):
+        """After an update from 1.2.0 (small only): offer the bigger Whisper this GPU can run. Asked
+        once per tier; nothing is downloaded without a yes."""
+        if not bootstrap.is_ready() or self.screenshot:
+            return
+        hw = self.hardware()
+        tier = hw['tier']
+        if self.settings.get('whisper_model', 'auto') != 'auto' or tier in bootstrap.whisper_installed() \
+                or self.settings.get('whisper_asked') == tier:
+            return
+        self.settings['whisper_asked'] = tier
+        self.save_settings()
+        m = bootstrap.whisper_models()[tier]
+        if self.win.confirm('Better transcription available',
+                            'Your %s (%g GB) can run Whisper %s for more accurate Transcribe.\n\n'
+                            'Download it now (%.1f GB)? PyTorch and the other models are already installed and are '
+                            'not downloaded again. Until then Whisper %s is used.' % (
+                                hw['gpu'] or 'GPU', hw['vram_gb'] or 0, tier, m['size'] / 1e9, self.whisper_effective())):
+            self.open_engine(download=tier)
+
+    def _start(self, songs, job='sync'):
+        if job == 'sync':
+            songs = [s for s in songs if split_lines(s.lyrics)]
         if not songs or self.busy or not self.ensure_engine():
             return
         for s in songs:
             s.status = 'Queued'
+            s.job = job
         self.queue = list(songs)
         self.busy = True
         self.win.refresh_queue(self.songs, self.cur)
@@ -189,11 +256,17 @@ class App:
         s = self.queue[0]
         lines = split_lines(s.lyrics)
         lang, iso = resolve_lang(s.lang, lines)
-        s.iso = iso
         s.status = 'Starting…'
         self._set_row(s)
+        if s.job == 'transcribe':
+            lang = None if s.lang in (None, '', 'auto') else lang   # the Language box overrides auto-detect
+            job = {'cmd': 'transcribe', 'id': s.id, 'audio': s.path, 'lang': lang}
+        else:
+            s.iso = iso
+            job = {'cmd': 'sync', 'id': s.id, 'audio': s.path, 'lines': lines, 'lang': lang, 'iso': iso}
+        job['whisper'] = self.whisper_effective()
         try:
-            self.engine.submit({'cmd': 'sync', 'id': s.id, 'audio': s.path, 'lines': lines, 'lang': lang, 'iso': iso})
+            self.engine.submit(job)
         except OSError as e:
             self._error(s.id, 'Engine could not start: %s' % e)
 
@@ -214,7 +287,8 @@ class App:
         s = self._find(sid)
         if not s:
             return
-        s.status = '%s %d%%' % (STAGES.get(stage, stage), round(pct * 100))
+        label = 'Transcribing' if (stage == 'transcribe' and s.job == 'transcribe') else STAGES.get(stage, stage)
+        s.status = '%s %d%%' % (label, round(pct * 100))
         self._set_row(s)
         done = len([x for x in self.songs if x.status.startswith('Synced')])
         self.win.set_busy(True, '%s · %s' % (s.label(), s.status), pct)
@@ -269,6 +343,23 @@ class App:
             self.win.status_lbl.setText('Re-synced %d lines after line %d.' % (max(0, len(new) - 1), k0 + 1))
             self._pop(sid)
             return
+        if s and res.get('mode') == 'transcribe':
+            s.result = res
+            instrumental.apply(res, self.settings)
+            s.lyrics = res.get('text') or ''
+            s.lyrics_src = 'transcribe'
+            if res.get('language') in ISO_FROM_WHISPER:
+                s.iso = ISO_FROM_WHISPER[res['language']]
+            low = res.get('low_conf') or 0
+            s.status = 'Transcribed' + (' · %d to check' % low if low else '')
+            s.dirty = True
+            self._set_row(s)
+            if s is self.current():
+                self.win.show_song(s)
+                self.win.status_lbl.setText('Transcribed with Whisper %s (%s): %d lines. Fix the amber words, then press '
+                                            'Auto-sync for exact timing.' % (res.get('whisper'), res.get('language'), len(res['lines'])))
+            self._pop(sid)
+            return
         if s:
             s.result = res
             instrumental.apply(res, self.settings)
@@ -309,7 +400,7 @@ class App:
         self.queue = []
         self.engine.stop()
         for s in self.songs:
-            if not s.status.startswith('Synced') and s.status != 'Error':
+            if not s.status.startswith(('Synced', 'Transcribed')) and s.status != 'Error':
                 s.status = 'Ready' if split_lines(s.lyrics) else 'Needs lyrics'
         self.busy = False
         self.win.set_busy(False, 'Cancelled.', 0)
@@ -431,5 +522,7 @@ def run_gui(argv):
         app.add_songs(files)
     if not bootstrap.is_ready():
         QTimer.singleShot(400, app.ensure_engine)
+    else:
+        QTimer.singleShot(2500, app.offer_tier_upgrade)
     QTimer.singleShot(3000, app.quiet_update_check)
     return qapp.exec()

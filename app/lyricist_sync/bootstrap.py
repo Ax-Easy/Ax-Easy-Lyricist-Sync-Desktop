@@ -31,8 +31,8 @@ def manifest():
 
 
 def detect_gpu():
-    """{'nvidia': bool, 'name', 'driver', 'cuda_driver' (e.g. 12040)} without importing torch."""
-    info = {'nvidia': False, 'name': '', 'driver': '', 'cuda_driver': 0}
+    """{'nvidia': bool, 'name', 'driver', 'cuda_driver' (e.g. 12040), 'vram_gb'} without importing torch."""
+    info = {'nvidia': False, 'name': '', 'driver': '', 'cuda_driver': 0, 'vram_gb': 0.0}
     if os.name == 'nt':
         try:
             nv = ctypes.WinDLL('nvcuda.dll')
@@ -45,15 +45,92 @@ def detect_gpu():
                                          if os.name == 'nt' else None)
     if smi and os.path.exists(smi):
         try:
-            out = run([smi, '--query-gpu=name,driver_version', '--format=csv,noheader'],
+            out = run([smi, '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader,nounits'],
                       text=True, timeout=15, creationflags=NO_WINDOW).stdout.strip().splitlines()
             if out:
-                name, drv = [x.strip() for x in out[0].split(',')[:2]]
-                info.update(name=name, driver=drv)
+                info.update(parse_smi(out[0]))
         except Exception:
             pass
     info['nvidia'] = bool(info['name']) or info['cuda_driver'] >= 12000
     return info
+
+
+def parse_smi(line):
+    """One line of nvidia-smi --query-gpu=name,driver_version,memory.total (MiB, nounits)."""
+    parts = [x.strip() for x in line.split(',')]
+    d = {'name': parts[0], 'driver': parts[1] if len(parts) > 1 else ''}
+    if len(parts) > 2:
+        try:
+            d['vram_gb'] = round(float(parts[2].split()[0]) / 1024.0, 1)
+        except ValueError:
+            pass
+    return d
+
+
+# Whisper size by hardware (Transcribe accuracy vs memory). GiB thresholds have slack because
+# the reported total is a little under the marketing size (an RTX 3090 "24 GB" shows 23.7 GiB in
+# torch and 24.0 in nvidia-smi; a "12 GB" card 11.7-12.0; a "6 GB" card 5.8-6.0).
+WHISPER_ORDER = ['small', 'medium', 'large-v3-turbo', 'large-v3']
+TIERS = [(23.5, 'large-v3'), (11.5, 'large-v3-turbo'), (5.5, 'medium')]
+
+
+def whisper_tier(vram_gb=None, variant='cuda'):
+    """CPU or < 6 GB -> small, 6-11 GB -> medium, 12-23 GB -> large-v3-turbo, >= 24 GB -> large-v3."""
+    if variant != 'cuda' or not vram_gb:
+        return 'small'
+    for gb, name in TIERS:
+        if vram_gb >= gb:
+            return name
+    return 'small'
+
+
+def whisper_models(man=None):
+    """{name: manifest entry} in WHISPER_ORDER."""
+    man = man or manifest()
+    by = {m['name']: m for m in man.get('whisper_models', [])}
+    return {n: by[n] for n in WHISPER_ORDER if n in by}
+
+
+def whisper_path(name, home=None):
+    m = whisper_models()[name]
+    return os.path.join(home or paths.home(), *m['dest'].split('/'))
+
+
+def whisper_installed(home=None):
+    """Sizes whose .pt is complete (right size; .ok marker or the file that 1.2.0 installed)."""
+    out = []
+    for n, m in whisper_models().items():
+        p = whisper_path(n, home)
+        if os.path.exists(p) and os.path.getsize(p) == m['size']:
+            out.append(n)
+    return out
+
+
+def effective_whisper(choice, tier, installed):
+    """What the engine will use: the user's pick (or the hardware tier for 'auto') when installed,
+    else the best installed size that is not bigger than that, else the best installed."""
+    want = tier if choice in (None, '', 'auto') else choice
+    if want in installed or not installed:
+        return want
+    order = WHISPER_ORDER
+    smaller = [n for n in installed if order.index(n) <= order.index(want)] if want in order else []
+    return max(smaller or installed, key=order.index)
+
+
+def delete_whisper(name, in_use, home=None):
+    """Remove a downloaded size (never the one in use or the last one). Returns bytes freed."""
+    inst = whisper_installed(home)
+    if name == in_use:
+        raise RuntimeError('Whisper %s is in use; pick another model first.' % name)
+    if name in inst and len(inst) <= 1:
+        raise RuntimeError('This is the only Whisper model installed.')
+    p = whisper_path(name, home)
+    freed = 0
+    for q in (p, p + '.ok', p + '.part'):
+        if os.path.exists(q):
+            freed += os.path.getsize(q)
+            os.remove(q)
+    return freed
 
 
 def recommended_variant(gpu=None):
@@ -64,7 +141,9 @@ def recommended_variant(gpu=None):
     return 'cpu'
 
 
-def plan(variant, man=None):
+def plan(variant, man=None, whisper=None):
+    """Files to fetch for a variant. Only ONE Whisper size is in the plan: `whisper` (default: the
+    manifest's small entry; the GUI passes the hardware tier)."""
     man = man or manifest()
     h = paths.home()
     dl = os.path.join(h, 'downloads')
@@ -73,13 +152,16 @@ def plan(variant, man=None):
         items.append(dict(w, dest=os.path.join(dl, w['name']), kind='wheel', label=w['name'].split('-')[0] + ' (' + variant.upper() + ')'))
     for w in man['wheels']:
         items.append(dict(w, dest=os.path.join(dl, w['name']), kind='wheel', label=w['name'].split('-')[0]))
+    wm = {m['name']: m for m in man.get('whisper_models', [])}
     for m in man['models']:
+        if m['id'] == 'whisper' and whisper and whisper in wm:
+            m = dict(wm[whisper], id='whisper')
         items.append(dict(m, dest=os.path.join(h, *m['dest'].split('/')), kind='model'))
     return items
 
 
-def total_size(variant):
-    return sum(i['size'] for i in plan(variant))
+def total_size(variant, whisper=None):
+    return sum(i['size'] for i in plan(variant, whisper=whisper))
 
 
 def state():
@@ -199,9 +281,10 @@ class Setup:
     resumable: finished downloads carry a .ok marker, finished steps are recorded in
     setup_progress.json, so an interrupted setup continues at the first incomplete step."""
 
-    def __init__(self, variant, on_progress=None, on_status=None, on_log=None, cancel=None, state=None):
+    def __init__(self, variant, on_progress=None, on_status=None, on_log=None, cancel=None, state=None, whisper=None):
         self.variant = variant
-        self.items = plan(variant)
+        self.whisper = whisper or 'small'
+        self.items = plan(variant, whisper=self.whisper)
         self.total = sum(i['size'] for i in self.items)
         self.on_progress = on_progress or (lambda *a: None)
         self.on_status = on_status or (lambda *a: None)
@@ -482,7 +565,7 @@ class Setup:
         self.state.update(sid, status='done', indeterminate=False, detail=d, done=1, total=1)
         man = manifest()
         st = {'ok': True, 'variant': self.variant, 'manifest': man['version'], 'installed': time.strftime('%Y-%m-%d %H:%M'),
-              'engine': info}
+              'engine': info, 'whisper': self.whisper}
         with open(os.path.join(self.home, 'state.json'), 'w', encoding='utf-8') as f:
             json.dump(st, f, indent=1)
         self.log('Setup complete: %s' % json.dumps(info))
@@ -551,6 +634,41 @@ class Setup:
             return res
         finally:
             self.logf.flush()
+
+
+class ModelDownload:
+    """Engine settings: fetch one more Whisper size with the setup machinery (resumable .part,
+    SHA256 while downloading, .ok marker, retries) as two visible steps, then re-check SHA256."""
+    STEPS = [('dl_whisper', 'Download Whisper {N}'), ('verify', 'Verify file (SHA256)')]
+
+    def __init__(self, name, cancel=None, state=None):
+        self.name = name
+        steps = [(k, lbl.replace('{N}', name)) for k, lbl in self.STEPS]
+        self.state = state or SetupState(steps)
+        self.setup = Setup('cpu', cancel=cancel, state=self.state, whisper=name)
+        self.setup.items = [i for i in self.setup.items if i['kind'] == 'model' and model_group(i) == 'whisper']
+        self.cancel = self.setup.cancel
+
+    def run(self):
+        s = self.setup
+        it = s.items[0]
+        free = shutil.disk_usage(s.home).free
+        need = 0 if s._verified(it) else it['size'] - (os.path.getsize(it['dest'] + '.part') if os.path.exists(it['dest'] + '.part') else 0)
+        if free < need + 5e8:
+            raise RuntimeError('Not enough disk space: %.1f GB free, %.1f GB needed.' % (free / 1e9, (need + 5e8) / 1e9))
+        for sid in ('dl_whisper', 'verify'):
+            try:
+                s.download_step(sid) if sid == 'dl_whisper' else s.verify_step()
+            except Cancelled:
+                self.state.update(sid, status='paused')
+                raise
+            except Exception as e:
+                self.state.update(sid, status='failed', error=str(e), indeterminate=False)
+                s.log('Model download failed: %s: %s' % (sid, e))
+                raise
+        s.log('Whisper %s installed' % self.name)
+        self.state.result = self.name
+        return self.name
 
 
 def cleanup_partial():

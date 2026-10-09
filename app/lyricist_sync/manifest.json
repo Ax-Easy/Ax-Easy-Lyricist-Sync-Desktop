@@ -283,7 +283,7 @@
   },
   {
    "id": "whisper",
-   "label": "Whisper small (repeat detection)",
+   "label": "Whisper small (transcribe and repeat detection)",
    "dest": "models/whisper/small.pt",
    "url": "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt",
    "sha256": "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794",
@@ -300,5 +300,55 @@
  ],
  "local_wheels": [
   "openai_whisper-20250625-py3-none-any.whl"
+ ],
+ "whisper_models": [
+  {
+   "id": "whisper",
+   "name": "small",
+   "label": "Whisper small",
+   "dest": "models/whisper/small.pt",
+   "url": "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt",
+   "sha256": "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794",
+   "size": 483617219,
+   "speed": "fast",
+   "accuracy": "good",
+   "vram_gb": 2
+  },
+  {
+   "id": "whisper",
+   "name": "medium",
+   "label": "Whisper medium",
+   "dest": "models/whisper/medium.pt",
+   "url": "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt",
+   "sha256": "345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1",
+   "size": 1528008539,
+   "speed": "medium",
+   "accuracy": "better",
+   "vram_gb": 5
+  },
+  {
+   "id": "whisper",
+   "name": "large-v3-turbo",
+   "label": "Whisper large-v3-turbo",
+   "dest": "models/whisper/large-v3-turbo.pt",
+   "url": "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt",
+   "sha256": "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a",
+   "size": 1617941637,
+   "speed": "fast on GPU",
+   "accuracy": "very good",
+   "vram_gb": 6
+  },
+  {
+   "id": "whisper",
+   "name": "large-v3",
+   "label": "Whisper large-v3",
+   "dest": "models/whisper/large-v3.pt",
+   "url": "https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt",
+   "sha256": "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb",
+   "size": 3087371615,
+   "speed": "slow",
+   "accuracy": "best",
+   "vram_gb": 10
+  }
  ]
 }

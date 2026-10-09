@@ -1,4 +1,4 @@
-Ax-Easy Lyricist Sync 1.2.0
+Ax-Easy Lyricist Sync 1.3.0
 
 Auto-syncs pasted lyrics to your songs and exports TTML, LRC, SRT and VTT.
 

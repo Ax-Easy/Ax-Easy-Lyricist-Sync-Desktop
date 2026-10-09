@@ -80,8 +80,16 @@ def _banner(p, w, text, dark):
     p.drawText(r.adjusted(12, 0, -12, 0), flags, text)
 
 
-def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=False):
+_CLEAN = {}   # the same composition without the caption banner (saved by _save into clean/)
+
+
+def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=False, overlay=None):
+    """overlay: (image, QPoint in widget coordinates) drawn over the window, e.g. an open dropdown."""
     win = render_alpha(widget)
+    if overlay is not None:
+        q = QPainter(win)
+        q.drawImage(overlay[1], overlay[0])
+        q.end()
     mw, mh = 90, 80
     w, h = win.width() + 2 * mw, win.height() + 2 * mh
     bg = checker(w, h) if backdrop == 'checker' else wallpaper(w, h, dark)
@@ -101,14 +109,24 @@ def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=Fal
         p.drawImage(0, 0, blur(bg))
         p.setClipping(False)
     p.drawImage(mw, mh, win)
+    p.end()
+    _CLEAN['img'] = out.copy()
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
     _banner(p, w, label, dark if backdrop != 'checker' else False)
     p.end()
+    _CLEAN['for'] = out.cacheKey()
     return out
 
 
 def _save(img, path):
+    """Saves the labelled image and, in clean/, the same picture without the caption banner (for the manual)."""
     img.save(path)
     print('saved', path, flush=True)
+    if _CLEAN.get('for') == img.cacheKey():
+        d = os.path.join(os.path.dirname(path), 'clean')
+        os.makedirs(d, exist_ok=True)
+        _CLEAN['img'].save(os.path.join(d, os.path.basename(path)))
 
 
 def _pump(sec, until=None):
@@ -277,6 +295,118 @@ def _choir(app, win, dark, fixture_dir, label, out_dir, name):
           os.path.join(out_dir, '%s_9_choir_review.png' % name))
 
 
+def _fake_small(home):
+    """Screenshots: pretend 1.2.0 installed Whisper small (sparse file of the right size)."""
+    from . import bootstrap
+    p = bootstrap.whisper_path('small', home)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if not os.path.exists(p):
+        with open(p, 'wb') as f:
+            f.truncate(bootstrap.whisper_models()['small']['size'])
+        open(p + '.ok', 'w').close()
+
+
+def _transcribe(app, win, dark, fixture_dir, label, out_dir, name):
+    """Transcribe result: lines and times written by Whisper, unsure words amber (list + lyrics box).
+    Uses <song>.transcribe.json next to the audio (a real engine result)."""
+    from . import instrumental
+    for rp in sorted(glob.glob(os.path.join(fixture_dir, '*.transcribe.json'))):
+        audio = rp[:-len('.transcribe.json')] + '.mp3'
+        if not os.path.exists(audio):
+            continue
+        app.add_songs([audio])
+        s = next(x for x in app.songs if x.path == audio)
+        with open(rp, encoding='utf-8') as f:
+            s.result = json.load(f)
+        s.result.pop('whisper_segments', None)
+        instrumental.apply(s.result, app.settings)
+        s.lyrics = s.result['text']
+        s.lyrics_src = 'transcribe'
+        low = s.result.get('low_conf') or 0
+        s.status = 'Transcribed' + (' · %d to check' % low if low else '')
+        app.cur = app.songs.index(s)
+        win.refresh_queue(app.songs, app.cur)
+        win.show_song(s)
+        _wait_audio(win)
+        lines = s.result['lines']
+        k = next((i for i, l in enumerate(lines) if not l.get('inst') and any(w[3] < 0.45 for w in l.get('words', []))), 1)
+        sel = min(len(lines) - 1, k + 1)        # the amber words show best on an unselected row
+        win.review.selectRow(sel)
+        win.review.scrollTo(win.review.model().index(max(0, k - 3), 1), win.review.ScrollHint.PositionAtTop)
+        from PySide6.QtGui import QTextCursor
+        blk = win.lyrics.document().findBlockByNumber(min(win.lyrics.document().blockCount() - 1, k + 1))
+        win.lyrics.setTextCursor(QTextCursor(blk))
+        win.lyrics.centerCursor()
+        win.set_busy(False, '', 1.0)
+        res = s.result
+        win.status_lbl.setText('Transcribed with Whisper %s (%s): %d lines. Fix the amber words, then press Auto-sync for '
+                               'exact timing.' % (res.get('whisper'), res.get('language'), len([l for l in lines if not l.get('inst')])))
+        base = os.path.splitext(os.path.basename(audio))[0]
+        _save(compose_labeled(win, dark, label + ' · Transcribe (%s, Whisper %s, no lyrics given): lines and times from '
+                                               'Whisper, unsure words in amber' % (base, res.get('whisper'))),
+              os.path.join(out_dir, '%s_12_transcribe_%s.png' % (name, base)))
+
+
+def _engine(app, win, dark, label, out_dir, name):
+    """Engine settings with the detected hardware and the open Whisper model dropdown, then a model
+    download in progress (static render of the real dialog)."""
+    from PySide6.QtCore import QPoint as _P
+    from . import bootstrap
+    from .dialogs import EngineDialog
+    os.environ['LYRICIST_SYNC_FAKE_VRAM'] = '24'
+    os.environ['LYRICIST_SYNC_FAKE_GPU'] = 'NVIDIA GeForce RTX 3090'
+    try:
+        _fake_small(os.environ['LYRICIST_SYNC_HOME'])
+        app.settings['whisper_model'] = 'auto'
+        d = EngineDialog(win, app)
+        d.show()
+        _pump(0.2)
+        d.combo.showPopup()
+        _pump(0.3)
+        pop = d.combo.view().window()
+        img = render_alpha(pop)
+        pos = d.combo.mapTo(d, _P(0, d.combo.height() + 2))
+        _save(compose_labeled(d, dark, 'Engine settings (sample hardware: RTX 3090, 24 GB) · Whisper model by hardware, '
+                                       'dropdown with size / speed / accuracy', overlay=(img, pos)),
+              os.path.join(out_dir, '%s_13_engine_settings.png' % name))
+        d.combo.hidePopup()
+        _pump(0.1)
+        _save(compose_labeled(d, dark, 'Engine settings (sample hardware: RTX 3090, 24 GB) · after the update from 1.2.0: '
+                                       'small installed, large-v3 recommended'),
+              os.path.join(out_dir, '%s_14_engine_panel.png' % name))
+        d.combo.setCurrentIndex(d.combo.findData('large-v3'))
+        d.dl = bootstrap.ModelDownload('large-v3')
+        st = d.dl.state
+        for sid in st.order:
+            from .dialogs import StepRow
+            d.rows[sid] = StepRow(st.steps[sid]['label'])
+            d.rows_box.addWidget(d.rows[sid])
+        tot = bootstrap.whisper_models()['large-v3']['size']
+        import time as _t
+        now = _t.time()
+        st.update('dl_whisper', status='running', done=int(tot * 0.42), total=tot, unit='bytes', speed=11.6e6,
+                  detail='Whisper large-v3 · %.0f of %.0f MB' % (tot * 0.42 / 1e6, tot / 1e6))
+        st.steps['dl_whisper']['t0'] = now - 112
+        st.update('verify', status='waiting', total=tot, unit='bytes')
+        d.bar.show()
+        d.btn_dl.hide()
+        d.btn_pause.setText('Pause')
+        d.btn_pause.show()
+        d.combo.setEnabled(False)
+        d.info.setText('Downloading Whisper large-v3: resumable (also after closing the app), SHA256 checked.')
+        d._poll()
+        _pump(0.1)
+        _save(compose_labeled(d, dark, 'Engine settings · switching to Whisper large-v3: download with per-step progress '
+                                       '(static render)'),
+              os.path.join(out_dir, '%s_15_model_download.png' % name))
+        d.timer.stop()
+        d.dl = None
+        d.hide()
+    finally:
+        os.environ.pop('LYRICIST_SYNC_FAKE_VRAM', None)
+        os.environ.pop('LYRICIST_SYNC_FAKE_GPU', None)
+
+
 def render(out_dir, fixture_dir=None):
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
@@ -291,7 +421,9 @@ def render(out_dir, fixture_dir=None):
     where = '%s offscreen render' % ('Windows' if os.name == 'nt' else platform.system())
     forced = chrome.FORCE_WIN10
     paths_out = []
-    for style in ('win10', 'win11'):
+    # LYRICIST_SYNC_SCREENS=transcribe,engine: only those shots (Windows 10 path), e.g. for the manual
+    only = [x for x in os.environ.get('LYRICIST_SYNC_SCREENS', '').split(',') if x]
+    for style in (('win10',) if only else ('win10', 'win11')):
         chrome.force_win10(style == 'win10')
         for dark in (True, False):
             name = '%s_%s' % (style, 'dark' if dark else 'light')
@@ -306,6 +438,14 @@ def render(out_dir, fixture_dir=None):
                     ' (forced with --force-win10-style)' if os.name == 'nt' else '', where)
             win.resize(1280 + 2 * win.margin(), 820 + 2 * win.margin())
             win.show()
+            if only:
+                win.set_device({'device': 'cuda', 'device_name': 'NVIDIA GeForce RTX 3090'})
+                if 'transcribe' in only:
+                    _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
+                if 'engine' in only:
+                    _engine(app, win, dark, label, out_dir, name)
+                win.close()
+                continue
             app.add_songs(audios)
             win.set_device({'text': 'Engine ready'})
             sim = style == 'win11'
@@ -383,6 +523,8 @@ def render(out_dir, fixture_dir=None):
             if style == 'win10':
                 _choir(app, win, dark, fixture_dir, label, out_dir, name)
                 _music(app, win, dark, fixture_dir, label, out_dir, name)
+                _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
+                _engine(app, win, dark, label, out_dir, name)
             win.close()
     chrome.force_win10(forced)
     return 0

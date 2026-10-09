@@ -240,14 +240,17 @@ class SetupDialog(GlassDialog):
                  'Pause any time; it continues where it stopped, also after a restart.' % paths.home())
         self.lay.addWidget(link_label(intro, 'plain'))
         if self.gpu['nvidia']:
-            g = 'NVIDIA GPU found: <b>%s</b>%s → CUDA build recommended.' % (
-                self.gpu['name'] or 'NVIDIA', (' (driver %s)' % self.gpu['driver']) if self.gpu['driver'] else '')
+            g = 'NVIDIA GPU found: <b>%s</b>%s%s → CUDA build recommended.' % (
+                self.gpu['name'] or 'NVIDIA', (' · %g GB VRAM' % self.gpu['vram_gb']) if self.gpu.get('vram_gb') else '',
+                (' (driver %s)' % self.gpu['driver']) if self.gpu['driver'] else '')
         else:
             g = 'No NVIDIA GPU found → CPU build (slower: about 1–2 minutes per song).'
+        g += ' Whisper model for this hardware: <b>%s</b> (change any time in Engine settings).' % self.tier(rec)
         self.lay.addWidget(link_label(g, 'sub'))
         self.variant = QComboBox()
-        for v, label in (('cuda', 'CUDA 12.4 (NVIDIA GPU)  ·  %.2f GB download'), ('cpu', 'CPU only  ·  %.2f GB download')):
-            self.variant.addItem(label % (bootstrap.total_size(v) / 1e9), v)
+        for v, label in (('cuda', 'CUDA 12.4 (NVIDIA GPU) + Whisper %s  ·  %.2f GB download'),
+                         ('cpu', 'CPU only + Whisper %s  ·  %.2f GB download')):
+            self.variant.addItem(label % (self.tier(v), bootstrap.total_size(v, whisper=self.tier(v)) / 1e9), v)
         self.variant.setCurrentIndex(0 if rec == 'cuda' else 1)
         self.variant.currentIndexChanged.connect(lambda _i: self._new_state())
         self.lay.addWidget(self.variant)
@@ -313,12 +316,17 @@ class SetupDialog(GlassDialog):
         self.lat_timer.timeout.connect(self._lat_tick)
         self.lat_timer.start(50)              # event-loop latency probe
 
+    def tier(self, variant):
+        """Whisper size this setup installs: by VRAM for CUDA, small on CPU (only that one is downloaded)."""
+        forced = os.environ.get('LYRICIST_SYNC_WHISPER_TIER')
+        return forced or bootstrap.whisper_tier(self.gpu.get('vram_gb'), variant)
+
     # -- state
     def _new_state(self):
         if self.thread and self.thread.is_alive():
             return
         v = self.variant.currentData()
-        self.setup = bootstrap.Setup(v)
+        self.setup = bootstrap.Setup(v, whisper=self.tier(v))
         self.state = self.setup.state
         for r in self.rows.values():
             r.setParent(None)
@@ -416,7 +424,8 @@ class SetupDialog(GlassDialog):
             return
         if self.error is not None or self.cancel_ev is not None:
             prev = self.state
-            self.setup = bootstrap.Setup(self.variant.currentData(), state=prev)
+            v = self.variant.currentData()
+            self.setup = bootstrap.Setup(v, state=prev, whisper=self.tier(v))
         self.error = None
         self.cancel_ev = threading.Event()
         self.setup.cancel = self.cancel_ev
@@ -760,4 +769,227 @@ class UpdateDialog(GlassDialog):
     def reject(self):
         if self.thread and self.thread.is_alive():
             self.cancel_ev.set()
+        super().reject()
+
+
+class EngineDialog(GlassDialog):
+    """Engine settings: detected hardware, the Whisper model (Auto = by VRAM, or a fixed size) with
+    size/speed/accuracy hints, on-demand download of another size (same per-step progress, resume
+    and SHA256 check as the setup) and deleting sizes that are not used."""
+    HINT = {'small': 'fastest, fine on CPU', 'medium': 'more accurate, needs ~5 GB VRAM for speed',
+            'large-v3-turbo': 'near large-v3 accuracy, much faster', 'large-v3': 'most accurate, needs ~10 GB VRAM'}
+
+    def __init__(self, parent, app, download=None):
+        super().__init__(parent, 'Engine settings', 660, 560)
+        self.app = app
+        self.hw = app.hardware()
+        self.models = bootstrap.whisper_models()
+        self.dl = None
+        self.thread = None
+        self._result = None
+        hw = self.hw
+        if hw['variant'] == 'cuda':
+            h = 'GPU: <b>%s</b>%s · CUDA build · Whisper runs in fp16' % (
+                hw['gpu'] or 'NVIDIA GPU', (' · %g GB VRAM' % hw['vram_gb']) if hw['vram_gb'] else '')
+        else:
+            h = 'CPU: <b>%s</b> · CPU build · Whisper runs in fp32' % (hw['cpu'] or 'this PC')
+        self.lay.addWidget(link_label('<b>Detected hardware</b><br>' + h, 'plain'))
+        self.lay.addWidget(link_label('Recommended for this hardware: <b>Whisper %s</b>  (CPU or under 6 GB → small · 6–11 GB → medium · '
+                                      '12–23 GB → large-v3-turbo · 24 GB and up → large-v3). Demucs and the MMS aligner are the same '
+                                      'on every tier.' % hw['tier'], 'sub'))
+        self.current = link_label('', 'plain')
+        self.lay.addWidget(self.current)
+        self.lay.addWidget(link_label('<b>Whisper model</b> (Transcribe and repeat detection)', 'plain'))
+        self.combo = QComboBox()
+        self.lay.addWidget(self.combo)
+        self.hint = link_label('', 'sub')
+        self.lay.addWidget(self.hint)
+        self.list_box = QVBoxLayout()
+        self.list_box.setSpacing(4)
+        self.lay.addLayout(self.list_box)
+        self.bar = GlassProgress()
+        self.bar.hide()
+        self.lay.addWidget(self.bar)
+        self.rows = {}
+        self.rows_box = QVBoxLayout()
+        self.rows_box.setSpacing(2)
+        self.lay.addLayout(self.rows_box)
+        self.info = link_label('', 'sub')
+        self.lay.addWidget(self.info)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_pause = PillButton('Pause')
+        self.btn_pause.clicked.connect(self.pause)
+        self.btn_pause.hide()
+        self.btn_dl = PillButton('Download', 'primary')
+        self.btn_dl.clicked.connect(lambda: self.download(self._wanted()))
+        self.btn_close = PillButton('Close')
+        self.btn_close.clicked.connect(self.reject)
+        for b in (self.btn_pause, self.btn_dl, self.btn_close):
+            row.addWidget(b)
+        self.lay.addLayout(row)
+        self._fill()
+        self.combo.currentIndexChanged.connect(self._picked)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._poll)
+        self.timer.start(100)
+        if download:
+            i = self.combo.findData(download)
+            if i >= 0:
+                self.combo.setCurrentIndex(i)
+            QTimer.singleShot(0, lambda: self.download(download))
+
+    # -- view
+    def _fill(self):
+        inst = bootstrap.whisper_installed()
+        choice = self.app.settings.get('whisper_model') or 'auto'
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        tier = self.hw['tier']
+        self.combo.addItem('Auto (by hardware) → %s%s' % (tier, '' if tier in inst else ' · not downloaded yet'), 'auto')
+        for n, m in self.models.items():
+            self.combo.addItem('%s  ·  %.2f GB  ·  speed: %s  ·  accuracy: %s%s' % (
+                n, m['size'] / 1e9, m['speed'], m['accuracy'], '  ·  ✓ installed' if n in inst else ''), n)
+        self.combo.setCurrentIndex(max(0, self.combo.findData(choice)))
+        self.combo.blockSignals(False)
+        eff = self.app.whisper_effective()
+        prec = 'fp16 on CUDA' if self.hw['variant'] == 'cuda' else 'fp32 on CPU'
+        note = ''
+        want = tier if choice == 'auto' else choice
+        if want != eff:
+            note = ' <span style="color:%s">(Whisper %s is not downloaded; using the best installed one)</span>' % (AMBER, want)
+        self.current.setText('In use: <b>Whisper %s</b> · %s%s' % (eff, prec, note))
+        for i in reversed(range(self.list_box.count())):
+            w = self.list_box.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+        for n in inst:
+            r = QWidget()
+            h = QHBoxLayout(r)
+            h.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel('Installed: Whisper %s · %.2f GB%s' % (n, self.models[n]['size'] / 1e9, '  · in use' if n == eff else ''))
+            lbl.setObjectName('sub')
+            h.addWidget(lbl, 1)
+            b = PillButton('Delete')
+            b.setEnabled(n != eff and len(inst) > 1)
+            b.setToolTip('In use' if n == eff else 'Free %.2f GB' % (self.models[n]['size'] / 1e9))
+            b.clicked.connect(lambda _c=False, n=n: self.delete(n))
+            h.addWidget(b)
+            self.list_box.addWidget(r)
+        self._picked()
+
+    def _wanted(self):
+        c = self.combo.currentData()
+        return self.hw['tier'] if c == 'auto' else c
+
+    def _picked(self, *_a):
+        want = self._wanted()
+        m = self.models.get(want)
+        inst = bootstrap.whisper_installed()
+        busy = self.thread is not None and self.thread.is_alive()
+        if m:
+            self.hint.setText('Whisper %s: %s. %.2f GB download, %s.' % (
+                want, self.HINT.get(want, ''), m['size'] / 1e9, 'installed' if want in inst else 'not downloaded yet'))
+        self.btn_dl.setVisible(want not in inst and not busy)
+        self.btn_dl.setText('Download Whisper %s (%.2f GB)' % (want, m['size'] / 1e9) if m else 'Download')
+        if not busy and (want in inst or self.combo.currentData() == 'auto'):
+            self._apply()
+
+    def _apply(self):
+        c = self.combo.currentData()
+        if self.app.settings.get('whisper_model') != c:
+            self.app.settings['whisper_model'] = c
+            self.app.save_settings()
+        eff = self.app.whisper_effective()
+        self.info.setText('Saved. The next Transcribe / Auto-sync uses Whisper %s.' % eff if c else '')
+
+    # -- actions
+    def delete(self, name):
+        from PySide6.QtWidgets import QMessageBox
+        if QMessageBox.question(self, 'Delete model', 'Delete Whisper %s (%.2f GB)? You can download it again any time.' % (
+                name, self.models[name]['size'] / 1e9)) != QMessageBox.Yes:
+            return
+        try:
+            freed = bootstrap.delete_whisper(name, self.app.whisper_effective())
+            self.info.setText('Deleted Whisper %s (%.2f GB freed).' % (name, freed / 1e9))
+        except Exception as e:
+            self.info.setText(str(e))
+        self._fill()
+
+    def download(self, name):
+        if self.thread and self.thread.is_alive() or name not in self.models:
+            return
+        prev = self.dl.state if (self.dl and self.dl.name == name) else None
+        self.dl = bootstrap.ModelDownload(name, state=prev)
+        st = self.dl.state
+        for sid, st_ in st.steps.items():
+            if st_['status'] in ('failed', 'paused'):
+                st.update(sid, status='waiting', error='')
+        if not self.rows or prev is None:
+            for r in self.rows.values():
+                r.setParent(None)
+            self.rows = {}
+            for sid in st.order:
+                self.rows[sid] = StepRow(st.steps[sid]['label'])
+                self.rows_box.addWidget(self.rows[sid])
+        self.bar.show()
+        self.btn_dl.hide()
+        self.btn_pause.setText('Pause')
+        self.btn_pause.show()
+        self.combo.setEnabled(False)
+        self._t0 = time.time()
+
+        def work():
+            try:
+                self._result = ('ok', self.dl.run())
+            except bootstrap.Cancelled:
+                self._result = ('paused', None)
+            except Exception as e:
+                self._result = ('failed', str(e))
+
+        self._result = None
+        self.thread = threading.Thread(target=work, daemon=True)
+        self.thread.start()
+
+    def pause(self):
+        if self.thread and self.thread.is_alive():
+            self.dl.cancel.set()
+            self.info.setText('Pausing…')
+        elif self.dl:
+            self.download(self.dl.name)
+
+    def _poll(self):
+        if not self.dl:
+            return
+        steps, _cur, _l, _n = self.dl.state.snapshot(10 ** 9)
+        now = time.time()
+        tot = got = 0.0
+        for sid, st in steps.items():
+            w = 1.0 if sid == 'dl_whisper' else 0.08
+            frac = 1.0 if st['status'] == 'done' else ((st['done'] / st['total']) if st['total'] else 0.0)
+            tot += w
+            got += w * min(1.0, frac)
+            self.rows[sid].show_state(st, now, int(now * 360) % 360)
+        self.bar.set_value(got / tot if tot else 0)
+        if self.thread is not None and not self.thread.is_alive() and self._result is not None:
+            kind, val = self._result
+            self._result = None
+            self.combo.setEnabled(True)
+            if kind == 'ok':
+                self.btn_pause.hide()
+                self.info.setText('Whisper %s downloaded and verified.' % val)
+                self._fill()
+                self._apply()
+            elif kind == 'paused':
+                self.btn_pause.setText('Resume')
+                self.info.setText('Paused. Resume continues where it stopped (also after closing the app).')
+            else:
+                self.btn_pause.setText('Retry')
+                self.info.setText('Download failed: %s' % (val or '')[:200])
+
+    def reject(self):
+        if self.thread and self.thread.is_alive():
+            self.dl.cancel.set()
+            self.thread.join(3)
         super().reject()

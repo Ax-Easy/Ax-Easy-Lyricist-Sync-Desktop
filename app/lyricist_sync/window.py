@@ -4,7 +4,7 @@ import os
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QLinearGradient,
-                           QPainter, QPainterPath, QPen, QPixmap, QShortcut)
+                           QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -21,7 +21,8 @@ from .formats import fmt_lrc_time, parse_time
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
 from .theme import ACCENT, display_family
 LOW_CONF = 0.6
-from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, PillButton, ReviewTable, STATE, AMBER
+LOW_WORD = 0.45   # Transcribe: a word Whisper gave less than this probability is shown in amber
+from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, PillButton, ReviewTable, STATE, AMBER, WORDS_ROLE
 
 meta = importlib.import_module(__package__)
 
@@ -242,10 +243,22 @@ class GlassWindow(QWidget, chrome.Frame):
             self.btn_cancel = PillButton('Cancel', 'danger')
             self.btn_cancel.clicked.connect(self.app.cancel)
             self.btn_cancel.hide()
+            self.btn_sync.setToolTip('Align the lyrics to the song. With no lyrics yet, it transcribes the song first.')
+            self.btn_tr = PillButton('Transcribe')
+            self.btn_tr.setToolTip('No lyrics? Let Whisper write them with times (unsure words in amber).\n'
+                                   'Then fix the words and press Auto-sync for exact timing.')
+            self.btn_tr.clicked.connect(lambda: self.app.transcribe_current())
+            self.btn_tr_all = PillButton('Transcribe all')
+            self.btn_tr_all.setToolTip('Transcribe every song that has no lyrics yet')
+            self.btn_tr_all.clicked.connect(lambda: self.app.transcribe_all())
             row2 = QHBoxLayout()
             for b in (self.btn_sync, self.btn_all, self.btn_cancel):
                 row2.addWidget(b)
             lay.addLayout(row2)
+            row3 = QHBoxLayout()
+            for b in (self.btn_tr, self.btn_tr_all):
+                row3.addWidget(b)
+            lay.addLayout(row3)
             self.progress = GlassProgress()
             self.stage_lbl = QLabel('')
             self.stage_lbl.setObjectName('hint')
@@ -425,6 +438,10 @@ class GlassWindow(QWidget, chrome.Frame):
             self.btn_update.clicked.connect(lambda: self.app.open_updates())
             self.btn_theme = PillButton('Light')
             self.btn_theme.clicked.connect(self._toggle_theme)
+            self.btn_engine = PillButton('Engine')
+            self.btn_engine.setToolTip('Engine settings: hardware and Whisper model')
+            self.btn_engine.clicked.connect(lambda: self.app.open_engine())
+            row.addWidget(self.btn_engine)
             row.addWidget(self.btn_theme)
             row.addWidget(self.btn_update)
             row.addWidget(self.btn_about)
@@ -707,11 +724,50 @@ class GlassWindow(QWidget, chrome.Frame):
             self._fill_review(song)
         else:
             self.wave.set_lines([])
+        self._mark_unsure(song)
         self.transport.setVisible(bool(song and song.result))
         self._load_audio(song)
         self._show_song_dir(song)
         self._loading = False
         self._update_buttons()
+
+    def _mark_unsure(self, song):
+        """Transcribe results: unsure words (Whisper probability < LOW_WORD) in amber in the lyrics
+        box, as long as that line of text is still what Whisper wrote."""
+        sels = []
+        res = song.result if song else None
+        if res and res.get('mode') == 'transcribe':
+            doc = self.lyrics.document()
+            byline = {}
+            for l in res['lines']:
+                if l.get('words') and not l.get('inst'):
+                    byline.setdefault(l['text'], l)
+            amber = QColor(AMBER)
+            for b in range(doc.blockCount()):
+                blk = doc.findBlockByNumber(b)
+                l = byline.get(blk.text().strip())
+                if not l:
+                    continue
+                pos = blk.text().find(l['text'])
+                for w in l['words']:
+                    word = w[0].strip()
+                    k = blk.text().find(word, pos)
+                    if k < 0:
+                        continue
+                    pos = k + len(word)
+                    if w[3] >= LOW_WORD:
+                        continue
+                    sel = QTextEdit.ExtraSelection()
+                    sel.format.setForeground(amber)
+                    sel.format.setFontUnderline(True)
+                    sel.format.setUnderlineColor(amber)
+                    sel.format.setToolTip('Whisper is unsure about this word (%d%%)' % round(100 * w[3]))
+                    c = QTextCursor(blk)
+                    c.setPosition(blk.position() + k)
+                    c.setPosition(blk.position() + pos, QTextCursor.KeepAnchor)
+                    sel.cursor = c
+                    sels.append(sel)
+        self.lyrics.setExtraSelections(sels)
 
     def _fill_review(self, song):
         lines = song.result['lines']
@@ -739,6 +795,8 @@ class GlassWindow(QWidget, chrome.Frame):
                     'Delete it with the Delete key or the right-click menu.'
             txt = QTableWidgetItem(('↻ ' if l.get('repeat') else '') + l['text'])
             txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            if l.get('words') and not inst and any(w[3] < LOW_WORD for w in l['words']):
+                txt.setData(WORDS_ROLE, [(w[0], w[3] < LOW_WORD) for w in l['words']])
             txt.setToolTip(tip)
             txt.setData(Qt.UserRole + 1, 'inst' if inst else '')
             if inst:
@@ -799,7 +857,11 @@ class GlassWindow(QWidget, chrome.Frame):
         synced = bool(has and cur.result)
         for b in (self.btn_add, self.btn_remove, self.btn_sync, self.btn_all):
             b.setEnabled(not busy)
-        self.btn_sync.setEnabled(not busy and has and bool(split_lines(cur.lyrics)))
+        self.btn_sync.setEnabled(not busy and has)   # no lyrics: Auto-sync transcribes first
+        self.btn_sync.setText('Auto-sync' if not has or split_lines(cur.lyrics) else 'Transcribe + sync')
+        self.btn_tr.setEnabled(not busy and has)
+        self.btn_tr_all.setEnabled(not busy and any(not split_lines(s.lyrics) for s in self.app.songs))
+        self.btn_engine.setEnabled(not busy)
         self.btn_all.setEnabled(not busy and any(split_lines(s.lyrics) for s in self.app.songs))
         sel = self.selected_songs() if hasattr(self, 'queue') else []
         self.btn_export.setEnabled(not busy and (synced or any(s.result for s in sel)))
@@ -894,6 +956,9 @@ class GlassWindow(QWidget, chrome.Frame):
         if d.apply_all.isChecked():
             state['all'] = d.choice
         return d.choice
+
+    def confirm(self, title, text):
+        return QMessageBox.question(self, title, text) == QMessageBox.Yes
 
     def set_busy(self, busy, stage='', pct=0.0):
         self.progress.set_value(pct)

@@ -8,6 +8,7 @@ datas = [
     ('app/lyricist_sync/res/*', 'lyricist_sync/res'),
     ('engine/lyricist_engine.py', 'engine'),
     ('engine/timing.py', 'engine'),
+    ('engine/transcribe.py', 'engine'),
 ]
 datas += [(w, 'wheels') for w in glob.glob('wheels/*.whl')]
 

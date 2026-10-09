@@ -1,0 +1,459 @@
+{
+ "mode": "transcribe",
+ "lines": [
+  {
+   "text": "Blast hours glowing in the rain.",
+   "start": 3.985,
+   "end": 5.828,
+   "conf": 0.642,
+   "why": [
+    "unsure words: hours"
+   ],
+   "words": [
+    [
+     "Blast",
+     3.67,
+     4.37,
+     0.655
+    ],
+    [
+     "hours",
+     4.37,
+     4.77,
+     0.257
+    ],
+    [
+     "glowing",
+     4.77,
+     5.15,
+     0.719
+    ],
+    [
+     "in",
+     5.15,
+     5.39,
+     0.998
+    ],
+    [
+     "the",
+     5.39,
+     5.53,
+     0.999
+    ],
+    [
+     "rain.",
+     5.53,
+     6.23,
+     0.995
+    ]
+   ],
+   "idx": 0,
+   "whisper_start": 3.67,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "We trace the light along the lane.",
+   "start": 7.009,
+   "end": 9.072,
+   "conf": 0.915,
+   "why": [],
+   "words": [
+    [
+     "We",
+     7.07,
+     7.25,
+     0.982
+    ],
+    [
+     "trace",
+     7.25,
+     7.57,
+     0.99
+    ],
+    [
+     "the",
+     7.57,
+     7.79,
+     0.996
+    ],
+    [
+     "light",
+     7.79,
+     8.05,
+     0.994
+    ],
+    [
+     "along",
+     8.05,
+     8.49,
+     0.996
+    ],
+    [
+     "the",
+     8.49,
+     8.81,
+     0.999
+    ],
+    [
+     "lane.",
+     8.81,
+     9.55,
+     0.774
+    ]
+   ],
+   "idx": 1,
+   "whisper_start": 7.07,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Hold the line, hold the line tonight.",
+   "start": 10.273,
+   "end": 13.097,
+   "conf": 0.949,
+   "why": [],
+   "words": [
+    [
+     "Hold",
+     10.63,
+     10.65,
+     0.9
+    ],
+    [
+     "the",
+     10.65,
+     10.89,
+     0.996
+    ],
+    [
+     "line,",
+     10.89,
+     11.31,
+     0.98
+    ],
+    [
+     "hold",
+     11.65,
+     11.97,
+     0.942
+    ],
+    [
+     "the",
+     11.97,
+     12.27,
+     0.998
+    ],
+    [
+     "line",
+     12.27,
+     12.55,
+     0.993
+    ],
+    [
+     "tonight.",
+     12.55,
+     13.07,
+     0.945
+    ]
+   ],
+   "idx": 2,
+   "whisper_start": 10.63,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Every word will find its time.",
+   "start": 14.279,
+   "end": 16.401,
+   "conf": 0.943,
+   "why": [],
+   "words": [
+    [
+     "Every",
+     14.27,
+     14.69,
+     0.971
+    ],
+    [
+     "word",
+     14.69,
+     14.97,
+     0.995
+    ],
+    [
+     "will",
+     14.97,
+     15.23,
+     0.879
+    ],
+    [
+     "find",
+     15.23,
+     15.61,
+     0.998
+    ],
+    [
+     "its",
+     15.61,
+     15.93,
+     0.947
+    ],
+    [
+     "time.",
+     15.93,
+     16.65,
+     0.998
+    ]
+   ],
+   "idx": 3,
+   "whisper_start": 14.27,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Silent signals crossing over.",
+   "start": 17.603,
+   "end": 19.686,
+   "conf": 0.979,
+   "why": [],
+   "words": [
+    [
+     "Silent",
+     17.77,
+     18.01,
+     0.965
+    ],
+    [
+     "signals",
+     18.01,
+     18.57,
+     0.978
+    ],
+    [
+     "crossing",
+     18.57,
+     19.09,
+     0.996
+    ],
+    [
+     "over.",
+     19.09,
+     19.93,
+     0.999
+    ]
+   ],
+   "idx": 4,
+   "whisper_start": 17.77,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Morning comes a little closer.",
+   "start": 20.867,
+   "end": 22.77,
+   "conf": 0.949,
+   "why": [],
+   "words": [
+    [
+     "Morning",
+     20.87,
+     21.17,
+     0.876
+    ],
+    [
+     "comes",
+     21.17,
+     21.67,
+     0.998
+    ],
+    [
+     "a",
+     21.67,
+     21.85,
+     0.998
+    ],
+    [
+     "little",
+     21.85,
+     22.11,
+     0.996
+    ],
+    [
+     "closer.",
+     22.11,
+     22.75,
+     0.999
+    ]
+   ],
+   "idx": 5,
+   "whisper_start": 20.87,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Hold the line, hold the line tonight.",
+   "start": 23.951,
+   "end": 26.775,
+   "conf": 0.996,
+   "why": [],
+   "words": [
+    [
+     "Hold",
+     24.23,
+     24.31,
+     0.993
+    ],
+    [
+     "the",
+     24.31,
+     24.59,
+     0.999
+    ],
+    [
+     "line,",
+     24.59,
+     24.99,
+     0.999
+    ],
+    [
+     "hold",
+     25.33,
+     25.65,
+     0.992
+    ],
+    [
+     "the",
+     25.65,
+     25.93,
+     0.999
+    ],
+    [
+     "line",
+     25.93,
+     26.19,
+     0.997
+    ],
+    [
+     "tonight.",
+     26.19,
+     26.77,
+     0.999
+    ]
+   ],
+   "idx": 6,
+   "whisper_start": 24.23,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  },
+  {
+   "text": "Every word will find its time.",
+   "start": 27.956,
+   "end": 30.059,
+   "conf": 0.993,
+   "why": [],
+   "words": [
+    [
+     "Every",
+     27.87,
+     28.29,
+     0.995
+    ],
+    [
+     "word",
+     28.29,
+     28.63,
+     0.999
+    ],
+    [
+     "will",
+     28.63,
+     28.89,
+     0.996
+    ],
+    [
+     "find",
+     28.89,
+     29.25,
+     0.999
+    ],
+    [
+     "its",
+     29.25,
+     29.57,
+     0.984
+    ],
+    [
+     "time.",
+     29.57,
+     30.07,
+     0.999
+    ]
+   ],
+   "idx": 7,
+   "whisper_start": 27.87,
+   "repeat": false,
+   "flag": "",
+   "mode": "transcribe"
+  }
+ ],
+ "duration": 33.103,
+ "language": "en",
+ "language_conf": 0.9826490879058838,
+ "whisper": "small",
+ "device": "cpu",
+ "stem": "htdemucs",
+ "low_conf": 0,
+ "version": 3,
+ "vocals": [
+  [
+   3.97,
+   5.9
+  ],
+  [
+   6.98,
+   9.12
+  ],
+  [
+   10.2,
+   13.11
+  ],
+  [
+   14.19,
+   16.45
+  ],
+  [
+   17.52,
+   19.71
+  ],
+  [
+   20.78,
+   22.78
+  ],
+  [
+   23.87,
+   26.78
+  ],
+  [
+   27.85,
+   30.11
+  ]
+ ],
+ "dropped": [],
+ "text": "Blast hours glowing in the rain.\nWe trace the light along the lane.\nHold the line, hold the line tonight.\nEvery word will find its time.\nSilent signals crossing over.\nMorning comes a little closer.\nHold the line, hold the line tonight.\nEvery word will find its time.",
+ "timings": {
+  "decode": 0.22,
+  "separate": 11.5,
+  "emissions": 6.61,
+  "transcribe": 13.28,
+  "align": 0.01,
+  "total": 31.68
+ }
+}

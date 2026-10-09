@@ -14,7 +14,7 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 For each song:
 
 1. **Demucs (htdemucs)** separates the vocals from the music.
-2. **Whisper small** listens to the vocals and finds lines that are **sung more often than they are written**
+2. **Whisper** listens to the vocals and finds lines that are **sung more often than they are written**
    (for example a chorus written once but sung twice, or lines 15–16 of *Stoned*). A dynamic-programming alignment
    of the transcript to the lyrics may jump back to an earlier line; every jump becomes a repeated block.
 3. **MMS_FA** (torchaudio forced aligner) aligns every sung line to the vocals and gives each line a start and end time.
@@ -36,6 +36,9 @@ On *Stoned* (Monitored) this pipeline put 24 of 24 sung lines within 0.04 s of t
 feasibility study. That study measured about 18–20 of 24 lines within about 0.3 s of the real singing, and none off by
 more than 1 s. On the synthesized demo songs in `tests/fixtures`, every line was within 0.08 s (English) and 0.03 s
 (Greek) of the known times.
+
+The Whisper size depends on the hardware (1.3.0): **small** on the CPU or a GPU under 6 GB, **medium** on 6–11 GB,
+**large-v3-turbo** on 12–23 GB and **large-v3** on 24 GB and more (for example an RTX 3090). See *Engine settings*.
 
 ## Using the app
 
@@ -82,6 +85,22 @@ more than 1 s. On the synthesized demo songs in `tests/fixtures`, every line was
        one, and it stays removed.
      - ♪ lines are in every format (LRC `[mm:ss.xx]♪`; SRT, VTT and TTML as normal cues) and are never sent to the
        aligner.
+   - **Transcribe (no lyrics needed)**: press **Transcribe** (or **Auto-sync** on a song without lyrics, or
+     **Transcribe all** for every song without lyrics). Whisper writes the lines with their times into the lyrics
+     box and the line list.
+     - The language is detected automatically; set the **Language** box to override it (for example Greek).
+     - Lines follow the singing: phrases, pauses over 0.6 s, at most about 42 characters.
+     - Starts come from the MMS aligner on Whisper's text, so they are as exact as an Auto-sync of that text.
+     - **Amber words** (underlined in the lyrics box) are the ones Whisper is unsure about. Lines with low
+       confidence get **● check**.
+     - Recommended: **Transcribe → fix the amber words in the lyrics box → Auto-sync**. The second step only runs
+       the aligner, because the song analysis is cached.
+     - Against made-up text: Whisper only hears where the vocals stem is active, and segments with no vocals
+       under them, loops, gibberish, humming and filler like "Thank you for watching" are dropped.
+   - **Engine settings** (the **Engine** button): the detected hardware, the Whisper model in use and a dropdown
+     (**Auto**, small, medium, large-v3-turbo, large-v3, with size, speed and accuracy). Picking a model that
+     isn't downloaded yet downloads it right there, with per-step progress, resume and SHA256 check. Models not
+     in use can be deleted.
 4. **Export**:
    - **Save to**: *Next to the audio file* (the default), *A chosen folder* or *Ask every time*.
    - **Per song**: the queue has an **Output folder** column, and **Change…** sets a folder for one song. To set
@@ -121,7 +140,7 @@ CI writes `update.json` next to the installer, with the real SHA256 and size (`t
 fields are:
 
 ```json
-{"version": "1.2.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.2.0.exe",
+{"version": "1.3.0", "date": "2026-10-09", "notes": "…", "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.3.0.exe",
  "sha256": "…", "size": 52000000, "minimum_os": "10.0.17763"}
 ```
 
@@ -142,6 +161,8 @@ fields are:
 ```
 LyricistSync.exe --setup [--variant auto|cuda|cpu]       first-run download without the GUI
 LyricistSync.exe --sync song1.mp3 song2.flac [--out DIR] [--formats ttml,lrc,srt,vtt] [--bom] [--lang el]
+LyricistSync.exe --transcribe song.mp3 [--lang el] [--whisper auto|small|medium|large-v3-turbo|large-v3] [--out DIR]
+                                                         no lyrics: timed files + song.transcript.txt
 LyricistSync.exe --selftest --report selftest.json      checks GUI, exporters and packaging (no models)
 LyricistSync.exe --screens DIR                           renders screenshots (both window paths, labelled)
 LyricistSync.exe --setup-gui [--auto --report r.json --shots DIR]   setup window on its own (CI latency test)
@@ -151,14 +172,14 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Setup-1.2.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Setup-1.3.0.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`. Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
   1. Download PyTorch and the packages
   2. Install
   3. Demucs model
-  4. Whisper model
+  4. Whisper model (only the size for this hardware)
   5. MMS model
   6. Verify (SHA256)
   7. GPU check / warm-up
@@ -173,10 +194,14 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 | Build | What is downloaded | Size |
 |---|---|---|
-| **CUDA 12.4** (picked automatically when an NVIDIA GPU is found) | Python 3.11 (25 MB), PyTorch 2.5.1+cu124 (2.51 GB), 39 engine wheels (104 MB), models (1.83 GB) | **4.48 GB** |
-| **CPU** | Same, with PyTorch 2.5.1+cpu (205 MB) | **2.17 GB** |
+| **CUDA 12.4** (picked automatically when an NVIDIA GPU is found) | Python 3.11 (25 MB), PyTorch 2.5.1+cu124 (2.51 GB), 39 engine wheels (104 MB), models | **4.48 GB** with Whisper small · 5.52 GB medium · 5.61 GB large-v3-turbo · **7.08 GB large-v3** (24 GB GPUs) |
+| **CPU** | Same, with PyTorch 2.5.1+cpu (205 MB), Whisper small | **2.17 GB** |
 
-The three models are Demucs htdemucs (84 MB), Whisper small (484 MB) and MMS_FA (1.26 GB).
+The models are Demucs htdemucs (84 MB), MMS_FA (1.26 GB) and one Whisper size: small (484 MB), medium (1.53 GB),
+large-v3-turbo (1.62 GB) or large-v3 (3.09 GB).
+
+**Updating from 1.2.0** downloads nothing but the app. If the GPU can run a bigger Whisper than the installed small,
+the app asks once whether to download it (Engine settings); PyTorch and the other models are kept.
 
 - **Time:** about 6–8 minutes at 100 Mbit/s for the CUDA build, plus 2–4 minutes to unpack and install.
 - **Disk:** about 7 GB after setup with CUDA, or 3.5 GB with CPU. The downloaded wheels are deleted after

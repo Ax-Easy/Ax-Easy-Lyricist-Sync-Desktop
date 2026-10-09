@@ -40,6 +40,8 @@ jobs:
           python tests/test_repeats.py -v
           python tests/test_bootstrap.py -v
           python tests/test_instrumental.py -v
+          python tests/test_tiers.py -v
+          python tests/test_transcribe.py -v
 
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
@@ -54,7 +56,7 @@ jobs:
           Add-Type -AssemblyName System.Windows.Forms
           [System.Windows.Forms.Screen]::AllScreens | Format-List DeviceName, Bounds, WorkingArea
 
-      - name: Self-test the frozen app (GUI, footer, exporters, save modes, conflicts, re-sync, updater, frame, ♪ lines, player, maximize)
+      - name: Self-test the frozen app (GUI, footer, exporters, save modes, conflicts, re-sync, updater, frame, ♪ lines, player, maximize, Transcribe UI, Whisper tiers, Engine settings)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--selftest','--report','selftest.json' -Wait -PassThru -NoNewWindow
@@ -76,7 +78,7 @@ jobs:
           Get-Content selftest-win10.json
           if ($p.ExitCode -ne 0) { throw "selftest (win10 style) failed: $($p.ExitCode)" }
 
-      - name: Screenshots (both window paths, labelled; Windows 10 path over a wallpaper and a checkerboard)
+      - name: Screenshots (both window paths, labelled + clean copies without the caption banner; Transcribe, Engine settings, model download)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\LyricistSync\LyricistSync.exe -ArgumentList '--screens','screens-ci','--fixture','tests\fixtures' -Wait -PassThru -NoNewWindow
@@ -172,7 +174,9 @@ jobs:
           name: screenshots
           path: |
             screens-ci/*.png
+            screens-ci/clean/*
             screens-ci/max/*
+            screens-ci/max/clean/*
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -233,6 +237,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "test_timing failed" }
           & $py tests/test_repeats.py -v
           if ($LASTEXITCODE -ne 0) { throw "test_repeats failed" }
+          & $py tests/test_transcribe.py -v
+          if ($LASTEXITCODE -ne 0) { throw "test_transcribe failed" }
       - name: Sync the demo songs and the hard fixtures (long intro, hummed intro, vocal bleed, choir)
         shell: pwsh
         run: |
@@ -242,6 +248,26 @@ jobs:
           if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "sync failed" }
       - name: Check accuracy against the known line times
         run: python tests/check_e2e.py e2e.json --expect 6
+      - name: Transcribe without lyrics (Whisper small on CPU, auto language) - English and Greek demo songs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force tr-in | Out-Null
+          Copy-Item tests\fixtures\demo_en.mp3, tests\fixtures\demo_el.mp3 tr-in\   # no .txt next to them
+          # English: language auto-detected. Greek: Language box = Greek (the override)
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--transcribe','tr-in\demo_en.mp3','--out','tr-out','--report','transcribe-en.json' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "transcribe (en) failed" }
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--transcribe','tr-in\demo_el.mp3','--lang','el','--out','tr-out','--report','transcribe-el.json' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Ax-Easy\LyricistSync\engine.log" -Tail 60; throw "transcribe (el) failed" }
+          Get-ChildItem tr-out
+      - name: Fix the words, then Auto-sync (reuses the cached analysis of Transcribe)
+        shell: pwsh
+        run: |
+          $p = Start-Process "$env:RUNNER_TEMP\lsync\LyricistSync.exe" -ArgumentList '--sync','tr-in\demo_en.mp3','--lyrics','tests\fixtures\demo_en.txt','--out','tr-out2','--report','after-sync.json' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "sync after transcribe failed" }
+      - name: Check the transcripts (WER, language, line starts, amber words) and the cached re-sync
+        run: |
+          python tests/check_transcribe.py transcribe-en.json transcribe-el.json --expect 2 --after-sync after-sync.json
+          python tests/check_e2e.py after-sync.json --expect 1
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -256,6 +282,9 @@ jobs:
           path: |
             e2e.json
             e2e-out/*
+            transcribe-*.json
+            after-sync.json
+            tr-out/*
             e2e-logs/*
             setup-gui.json
             setup-shots/*

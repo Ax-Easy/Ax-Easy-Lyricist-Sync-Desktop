@@ -1,7 +1,7 @@
 ; Inno Setup 6 script for Ax-Easy Lyricist Sync (per-user install, no admin needed).
 #define MyAppName "Ax-Easy Lyricist Sync"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.3.0"
 #endif
 #define MyAppPublisher "Ax-Easy"
 #define MyAppURL "https://www.ax-easy.com"
