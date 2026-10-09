@@ -617,13 +617,15 @@ def run(report_path=None):
             out['native_restored'] = win.geometry().getRect()
             assert all(abs(a - b) <= 2 for a, b in zip(win.geometry().getRect(), normal.getRect())), out['native_restored']
         win._toggle_full()
-        pump(T, lambda: win.isFullScreen() and win.geometry() == win.screen().geometry())
+        pump(T if not mac else 12.0, lambda: win.isFullScreen() and win.geometry() == win.screen().geometry())
         pump(0.2 if not mac else 1.5)
         assert win.isFullScreen()
         check_fill('fullscreen', win.screen().geometry())
         win._toggle_full()
         pump(T, lambda: not win.isFullScreen() and win.geometry() == normal)
-        pump(0.0 if not mac else 1.5)
+        if mac:   # leaving the full-screen space animates; slow on the Intel CI VMs
+            pump(12.0, lambda: not win.isFullScreen() and not win.isMaximized())
+            pump(1.5)
         out['after_fullscreen'] = win.geometry().getRect()
         assert not win.isFullScreen() and not win.isMaximized()
         out['healed'] = getattr(win, '_healed', 0)

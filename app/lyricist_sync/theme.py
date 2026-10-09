@@ -127,6 +127,14 @@ QLineEdit#editText {{ font-size: 14px; padding: 8px 12px; }}
 """
 
 
+def apply_platform_style(qapp):
+    """macOS: Fusion under the app's style sheets. The native macOS style ignores parts of them (check box
+    indicators drawn over their labels, fixed button paddings that clip text); Windows keeps its native style."""
+    import sys
+    if sys.platform == 'darwin' and qapp.style().name().lower() != 'fusion':
+        qapp.setStyle('Fusion')
+
+
 def ui_font():
     import sys
     if sys.platform == 'darwin':   # San Francisco (the system font) at the standard macOS size

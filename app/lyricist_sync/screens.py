@@ -98,7 +98,30 @@ def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=Fal
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing)
     p.drawImage(0, 0, bg)
-    if simulate_mica:  # DWM shadow + Mica can't be captured offscreen: approximate them
+    mac_win = getattr(widget, '_mode', None) == 'mac'
+    if mac_win:   # the native macOS frame (shadow, rounded corners, traffic lights) isn't in a widget render
+        from . import macfx
+        r = QRectF(mw, mh, win.width(), win.height())
+        p.setPen(Qt.NoPen)
+        for i in range(30, 0, -2):
+            p.setBrush(QColor(0, 0, 0, int(9 * (1 - i / 32))))
+            p.drawRoundedRect(r.adjusted(-i * 0.7, -i * 0.4 + 14, i * 0.7, i * 1.0 + 14), 10 + i, 10 + i)
+        path = QPainterPath()
+        path.addRoundedRect(r, 10, 10)
+        p.setClipPath(path)
+        p.drawImage(0, 0, blur(bg))
+        p.drawImage(mw, mh, win)
+        p.setClipping(False)
+        p.setPen(QColor(255, 255, 255, 40) if dark else QColor(0, 0, 0, 40))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        cy = mh + macfx.TITLEBAR_H / 2.0
+        for k, (fill, edge) in enumerate((('#FF5F57', '#E0443E'), ('#FEBC2E', '#DEA123'), ('#28C840', '#1AAB29'))):
+            p.setPen(QColor(edge))
+            p.setBrush(QColor(fill))
+            p.drawEllipse(QPointF(mw + 20 + 20 * k, cy), 6, 6)
+        win = None
+    elif simulate_mica:  # DWM shadow + Mica can't be captured offscreen: approximate them
         r = QRectF(mw, mh, win.width(), win.height())
         p.setPen(Qt.NoPen)
         for i in range(24, 0, -2):
@@ -109,7 +132,8 @@ def compose_labeled(widget, dark, label, backdrop='wallpaper', simulate_mica=Fal
         p.setClipPath(path)
         p.drawImage(0, 0, blur(bg))
         p.setClipping(False)
-    p.drawImage(mw, mh, win)
+    if win is not None:
+        p.drawImage(mw, mh, win)
     p.end()
     _CLEAN['img'] = out.copy()
     p = QPainter(out)
@@ -225,6 +249,7 @@ def render_maximized(out_dir, fixture_dir=None):
     from .app import App
     from . import theme as thememod
     qapp = QApplication.instance() or QApplication(['LyricistSync'])
+    thememod.apply_platform_style(qapp)
     qapp.setFont(thememod.ui_font())
     fixture_dir = fixture_dir or os.path.join(os.path.dirname(__file__), '..', '..', 'tests', 'fixtures')
     hard = os.path.join(fixture_dir, '..', 'hard')
@@ -356,6 +381,8 @@ def _engine(app, win, dark, label, out_dir, name):
     from .dialogs import EngineDialog
     os.environ['LYRICIST_SYNC_FAKE_VRAM'] = '24'
     os.environ['LYRICIST_SYNC_FAKE_GPU'] = 'NVIDIA GeForce RTX 3090'
+    os.environ['LYRICIST_SYNC_FAKE_MEM'] = '32'   # macOS: sample unified memory
+    hw = 'sample memory: 32 GB' if sys.platform == 'darwin' else 'sample hardware: RTX 3090, 24 GB'
     try:
         _fake_small(os.environ['LYRICIST_SYNC_HOME'])
         app.settings['whisper_model'] = 'auto'
@@ -367,12 +394,12 @@ def _engine(app, win, dark, label, out_dir, name):
         pop = d.combo.view().window()
         img = render_alpha(pop)
         pos = d.combo.mapTo(d, _P(0, d.combo.height() + 2))
-        _save(compose_labeled(d, dark, 'Engine settings (sample hardware: RTX 3090, 24 GB) · Whisper model by hardware, '
+        _save(compose_labeled(d, dark, 'Engine settings (%s) · Whisper model by hardware, ' % hw +
                                        'dropdown with size / speed / accuracy', overlay=(img, pos)),
               os.path.join(out_dir, '%s_13_engine_settings.png' % name))
         d.combo.hidePopup()
         _pump(0.1)
-        _save(compose_labeled(d, dark, 'Engine settings (sample hardware: RTX 3090, 24 GB) · after the update from 1.2.0: '
+        _save(compose_labeled(d, dark, 'Engine settings (%s) · after the update from 1.2.0: ' % hw +
                                        'small installed, large-v3 recommended'),
               os.path.join(out_dir, '%s_14_engine_panel.png' % name))
         d.combo.setCurrentIndex(d.combo.findData('large-v3'))
@@ -405,6 +432,7 @@ def _engine(app, win, dark, label, out_dir, name):
         d.hide()
     finally:
         os.environ.pop('LYRICIST_SYNC_FAKE_VRAM', None)
+        os.environ.pop('LYRICIST_SYNC_FAKE_MEM', None)
         os.environ.pop('LYRICIST_SYNC_FAKE_GPU', None)
 
 
@@ -526,21 +554,27 @@ def render(out_dir, fixture_dir=None):
     from .widgets import STATE
     qapp = QApplication.instance() or QApplication(['LyricistSync'])
     from . import theme as thememod
+    thememod.apply_platform_style(qapp)
     qapp.setFont(thememod.ui_font())
     fixture_dir = fixture_dir or os.path.join(os.path.dirname(__file__), '..', '..', 'tests', 'fixtures')
     audios = sorted(glob.glob(os.path.join(fixture_dir, 'demo_*.mp3')))
-    where = '%s offscreen render' % ('Windows' if os.name == 'nt' else platform.system())
+    where = 'macOS widget render' if sys.platform == 'darwin' else '%s offscreen render' % ('Windows' if os.name == 'nt' else platform.system())
     forced = chrome.FORCE_WIN10
     paths_out = []
     # LYRICIST_SYNC_SCREENS=transcribe,engine: only those shots (Windows 10 path), e.g. for the manual
     only = [x for x in os.environ.get('LYRICIST_SYNC_SCREENS', '').split(',') if x]
-    for style in (('win10',) if only else ('win10', 'win11')):
-        chrome.force_win10(style == 'win10')
+    IS_MAC = sys.platform == 'darwin'
+    styles = ('mac',) if IS_MAC else ('win10',) if only else ('win10', 'win11')
+    for style in styles:
+        if not IS_MAC:
+            chrome.force_win10(style == 'win10')
         for dark in (True, False):
             name = '%s_%s' % (style, 'dark' if dark else 'light')
             app = App(qapp, screenshot=True, dark=dark)
             win = app.win
-            if style == 'win11':
+            if style == 'mac':
+                label = 'macOS · native title bar + vibrancy (frame and traffic lights drawn in: not part of a widget render) · %s' % where
+            elif style == 'win11':
                 win._mode, win._backdrop = 'win11', 'mica'
                 win._apply_margins()
                 label = 'Windows 11 path · DWM rounded corners + Mica (simulated here: DWM effects are not in offscreen renders) · %s' % where
@@ -549,7 +583,7 @@ def render(out_dir, fixture_dir=None):
                     ' (forced with --force-win10-style)' if os.name == 'nt' else '', where)
             win.resize(1280 + 2 * win.margin(), 820 + 2 * win.margin())
             win.show()
-            if only:
+            if only and not IS_MAC:
                 win.set_device({'device': 'cuda', 'device_name': 'NVIDIA GeForce RTX 3090'})
                 if 'transcribe' in only:
                     _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
@@ -562,7 +596,7 @@ def render(out_dir, fixture_dir=None):
             app.add_songs(audios)
             win.set_device({'text': 'Engine ready'})
             sim = style == 'win11'
-            if style == 'win10' or dark:
+            if style in ('win10', 'mac') or dark:
                 _save(compose_labeled(win, dark, label + ' · before sync', simulate_mica=sim),
                       os.path.join(out_dir, '%s_1_before_sync.png' % name))
             info = None
@@ -592,17 +626,18 @@ def render(out_dir, fixture_dir=None):
             if style == 'win10' and dark:
                 _save(compose_labeled(win, dark, label + ' · on a checkerboard: only the rounded window and its shadow',
                                       backdrop='checker'), os.path.join(out_dir, 'win10_checker_after_sync.png'))
-            if style == 'win10':
+            if style in ('win10', 'mac'):
                 from .dialogs import AboutDialog, ConflictDialog, SetupDialog, UpdateDialog
                 from . import bootstrap
-                d = SetupDialog(win, 'cuda')
+                d = SetupDialog(win, 'mps' if IS_MAC else 'cuda')
                 st = d.state
                 tot = sum(i['size'] for i in d.setup.step_items('dl_torch'))
                 st.update('dl_torch', status='done', done=tot, total=tot, detail='45 files, %.2f GB, SHA256 checked while downloading' % (tot / 1e9))
                 now = __import__('time').time()
                 st.steps['dl_torch']['t0'], st.steps['dl_torch']['t1'] = now - 435, now - 83
                 st.update('install', status='running', done=0, total=0, unit='files', indeterminate=True,
-                          detail='Installing PyTorch · torch/lib/torch_cuda.dll')
+                          detail='Installing PyTorch · torch/lib/libtorch_cpu.dylib' if IS_MAC else
+                          'Installing PyTorch · torch/lib/torch_cuda.dll')
                 st.steps['install']['t0'] = now - 83
                 d._t0 = now - 435
                 d.variant.setEnabled(False)
@@ -610,7 +645,7 @@ def render(out_dir, fixture_dir=None):
                 d.btn_pause.show()
                 d.show()
                 d._poll()
-                _save(compose_labeled(d, dark, 'Setup (Windows 10 path) · static render, CUDA variant, step 2 running'),
+                _save(compose_labeled(d, dark, 'Setup · static render, %s variant, step 2 running' % ('Apple Silicon' if IS_MAC else 'CUDA')),
                       os.path.join(out_dir, '%s_3_setup.png' % name))
                 d.timer.stop()
                 d.lat_timer.stop()
@@ -633,12 +668,13 @@ def render(out_dir, fixture_dir=None):
                 c.show()
                 _save(compose_labeled(c, dark, 'Files already exist'), os.path.join(out_dir, '%s_8_conflict.png' % name))
                 c.close()
-            if style == 'win10':
+            if style in ('win10', 'mac'):
                 _choir(app, win, dark, fixture_dir, label, out_dir, name)
                 _music(app, win, dark, fixture_dir, label, out_dir, name)
                 _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
                 _engine(app, win, dark, label, out_dir, name)
                 _edit(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
-    chrome.force_win10(forced)
+    if not IS_MAC:
+        chrome.force_win10(forced)
     return 0
