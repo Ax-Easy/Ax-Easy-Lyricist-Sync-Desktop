@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QC
                                QAbstractSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
 import importlib
-from . import chrome, instrumental, paths, theme as thememod, winfx
+from . import chrome, edits, instrumental, paths, theme as thememod, winfx
 from .player import INST, AudioCache, Waveform, fmt_clock
 from .chrome import MARGIN, RADIUS
 from .export import SAVE_MODES, export_song, read_tags, target_dir  # noqa: F401  (re-exported for the CLI)
@@ -379,15 +379,28 @@ class GlassWindow(QWidget, chrome.Frame):
             self.btn_resync.setToolTip('Keep this line where it is now (after you fixed it) and re-align only the lines after it')
             self.btn_resync.clicked.connect(lambda: self._resync_row(self.review.currentRow()))
             tools.addWidget(self.btn_resync)
+            self.btn_undo = PillButton('↶')
+            self.btn_undo.setFixedWidth(40)
+            self.btn_undo.setToolTip('Undo the last change in the line list (Ctrl+Z)')
+            self.btn_undo.clicked.connect(self.undo)
+            self.btn_redo = PillButton('↷')
+            self.btn_redo.setFixedWidth(40)
+            self.btn_redo.setToolTip('Redo (Ctrl+Y)')
+            self.btn_redo.clicked.connect(self.redo)
+            tools.addWidget(self.btn_undo)
+            tools.addWidget(self.btn_redo)
             tools.addStretch(1)
             tools.addWidget(self.btn_inst_add)
             tools.addWidget(self.btn_inst_cfg)
             lay.addLayout(tools)
             self.review = ReviewTable()
             self.review.setMouseTracking(True)
-            self.review.setItemDelegate(GlassRowDelegate(self.review))
+            self.review_delegate = GlassRowDelegate(self.review)
+            self.review.setItemDelegate(self.review_delegate)
+            self.review_delegate.edited.connect(self._cell_edited)
+            self.review_delegate.split.connect(lambda r, cur, text: self.split_line(r, cur, text))
+            self.review.setToolTip('')
             self.review.play_line.connect(self._play_row)
-            self.review.itemChanged.connect(self._time_edited)
             self.review.setContextMenuPolicy(Qt.CustomContextMenu)
             self.review.customContextMenuRequested.connect(self._review_menu)
             self.review.itemSelectionChanged.connect(lambda: self.wave.set_selected(self.review.currentRow()))
@@ -794,7 +807,9 @@ class GlassWindow(QWidget, chrome.Frame):
                     l.get('kind'), 'Instrumental part (added by hand)') + ' — shown as %s in the lyric files. ' % l['text'] + \
                     'Delete it with the Delete key or the right-click menu.'
             txt = QTableWidgetItem(('↻ ' if l.get('repeat') else '') + l['text'])
-            txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | (Qt.NoItemFlags if inst else Qt.ItemIsEditable))
+            if not inst:
+                tip += '\nDouble-click or F2 to edit the words · right-click for more'
             if l.get('words') and not inst and any(w[3] < LOW_WORD for w in l['words']):
                 txt.setData(WORDS_ROLE, [(w[0], w[3] < LOW_WORD) for w in l['words']])
             txt.setToolTip(tip)
@@ -808,16 +823,21 @@ class GlassWindow(QWidget, chrome.Frame):
             st = QTableWidgetItem(fmt_lrc_time(l['start']))
             st.setTextAlignment(Qt.AlignCenter)
             st.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-            st.setToolTip(tip)
+            st.setData(GlassRowDelegate.TIME_ROLE, l['start'])
+            st.setToolTip('Start · double-click to type a time (mm:ss.xxx)')
             self.review.setItem(i, 2, st)
             en = QTableWidgetItem(fmt_lrc_time(l['end']))
             en.setTextAlignment(Qt.AlignCenter)
-            en.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            en.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+            en.setData(GlassRowDelegate.TIME_ROLE, l['end'])
+            en.setToolTip('End · double-click to type a time (mm:ss.xxx)')
             self.review.setItem(i, 3, en)
             if inst:
                 note = 'music' if l.get('auto') else 'music ✎'
             elif is_low:
                 note = '● check'
+            elif l.get('edited'):
+                note = '✎ edited'
             elif l.get('manual'):
                 note = '✎ fixed'
             else:
@@ -828,7 +848,7 @@ class GlassWindow(QWidget, chrome.Frame):
             nt.setData(Qt.UserRole, 'low' if is_low else '')
             if inst:
                 nt.setForeground(QColor(INST))
-            elif note and note != '✎ fixed':
+            elif note and note not in ('✎ fixed', '✎ edited'):
                 nt.setForeground(QColor(AMBER))
             self.review.setItem(i, 4, nt)
         self.review.blockSignals(False)
@@ -869,6 +889,13 @@ class GlassWindow(QWidget, chrome.Frame):
         row = self.review.currentRow()
         L = cur.result['lines'] if synced else []
         self.btn_resync.setEnabled(synced and not busy and 0 <= row < len(L) and not L[row].get('inst'))
+        h = getattr(cur, 'history', None) if has else None
+        self.btn_undo.setEnabled(bool(h and h.can_undo()) and not busy)
+        self.btn_redo.setEnabled(bool(h and h.can_redo()) and not busy)
+        if h and h.can_undo():
+            self.btn_undo.setToolTip('Undo: %s (Ctrl+Z)' % (h.undo_stack[-1].get('label') or 'last change'))
+        if h and h.can_redo():
+            self.btn_redo.setToolTip('Redo: %s (Ctrl+Y)' % (h.redo_stack[-1].get('label') or 'change'))
         self.btn_cancel.setVisible(busy)
         self.btn_browse.setEnabled(self.save_mode.currentData() == 'folder')
         self.out_dir.setEnabled(self.save_mode.currentData() == 'folder')
@@ -917,18 +944,53 @@ class GlassWindow(QWidget, chrome.Frame):
         if row < 0:
             return
         self.review.selectRow(row)
-        m = QMenu(self)
-        inst = bool(self._lines()[row].get('inst')) if row < len(self._lines()) else False
-        m.addAction('▶  Play from this line', lambda: self._play_row(row))
-        if not inst:
-            a = m.addAction('⟲  Re-sync from this line', lambda: self._resync_row(row))
-            a.setEnabled(not self.app.busy)
-        m.addSeparator()
-        m.addAction('♪  Insert ♪ here (at the playhead)', self._insert_inst)
-        if inst:
-            m.addAction('Delete this ♪ line', lambda: self._delete_inst(row))
-        m.addAction('♪ settings…', self._inst_settings)
+        m = self.review_menu(row)
         m.exec(self.review.viewport().mapToGlobal(pos))
+
+    def review_menu(self, row):
+        """The right-click menu of a line (built separately so the selftest / screenshots can use it)."""
+        m = QMenu(self)
+        m.setObjectName('reviewMenu')
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return m
+        l = L[row]
+        inst = bool(l.get('inst'))
+        busy = self.app.busy
+        a = m.addAction('✎  Edit Line…', lambda: self.edit_line_dialog(row))
+        a.setShortcut(QKeySequence('Return'))
+        m.addAction('▶  Play from line', lambda: self._play_row(row))
+        a = m.addAction('⟲  Re-sync from here', lambda: self._resync_row(row))
+        a.setEnabled(not inst and not busy)
+        a = m.addAction('◎  Re-align this line', lambda: self.realign_line(row))
+        a.setEnabled(not inst and not busy)
+        a.setToolTip('Run the aligner again for this line only, between the lines around it (after big word changes)')
+        m.addSeparator()
+        a = m.addAction('Split line at cursor', lambda: self.split_line(row))
+        a.setEnabled(not inst and len(l['text'].split()) > 1)
+        a = m.addAction('Merge with next', lambda: self.merge_line(row))
+        a.setEnabled(edits.can_merge(L, row))
+        m.addAction('Insert line above', lambda: self.insert_line(row, below=False))
+        m.addAction('Insert line below', lambda: self.insert_line(row, below=True))
+        m.addSeparator()
+        m.addAction('♪  Insert ♪ here', self._insert_inst)
+        if inst:
+            m.addAction('Unmark ♪ (make it a sung line)', lambda: self.unmark_inst(row))
+        else:
+            m.addAction('Mark as ♪', lambda: self.mark_inst(row))
+        m.addAction('♪ settings…', self._inst_settings)
+        m.addSeparator()
+        h = edits.history(self.app.current())
+        a = m.addAction('Undo' + (': ' + h.undo_stack[-1].get('label', '') if h.can_undo() else ''), self.undo)
+        a.setShortcut(QKeySequence('Ctrl+Z'))
+        a.setEnabled(h.can_undo() and not busy)
+        a = m.addAction('Redo' + (': ' + h.redo_stack[-1].get('label', '') if h.can_redo() else ''), self.redo)
+        a.setShortcut(QKeySequence('Ctrl+Y'))
+        a.setEnabled(h.can_redo() and not busy)
+        m.addSeparator()
+        a = m.addAction('Delete line', lambda: self.delete_line(row))
+        a.setShortcut(QKeySequence('Delete'))
+        return m
 
     def _resync_row(self, row):
         song = self.app.current()
@@ -955,6 +1017,13 @@ class GlassWindow(QWidget, chrome.Frame):
         d.exec()
         if d.apply_all.isChecked():
             state['all'] = d.choice
+        return d.choice
+
+    def ask_keep_edits(self, songs, action):
+        """'keep' or 'replace' (Transcribe / Auto-sync over lines edited by hand)."""
+        from .dialogs import KeepEditsDialog
+        d = KeepEditsDialog(self, songs, action)
+        d.exec()
         return d.choice
 
     def confirm(self, title, text):
@@ -993,24 +1062,64 @@ class GlassWindow(QWidget, chrome.Frame):
             self.review.blockSignals(False)
         self.wave.set_lines(L, self.review.currentRow())
 
+    # -- every change goes through _edit: undo step, then the lyrics box / list / waveform refresh
+    def _edit(self, label, fn, tag=None, select=None, refill=True):
+        song = self.app.current()
+        if not song or not song.result or self.app.busy:
+            return None
+        h = edits.history(song)
+        pushed = h.push(song, label, tag)
+        before = (edits.capture(song)['result']['lines'], song.lyrics) if pushed else None
+        out = fn(song)
+        if before is not None and (song.result['lines'], song.lyrics) == before:   # nothing changed
+            h.undo_stack.pop()
+            self._update_buttons()
+            return out
+        song.dirty = True
+        self.after_edit(song, select if select is not None else self.review.currentRow(), refill)
+        return out
+
+    def after_edit(self, song, row=None, refill=True):
+        """The result changed: list, lyrics box, waveform, queue row, buttons."""
+        if song is not self.app.current():
+            return
+        row = self.review.currentRow() if row is None else row
+        if refill:
+            self._fill_review(song)
+        else:
+            self.wave.set_lines(self._lines(), row)
+        if self.lyrics.toPlainText() != song.lyrics:
+            self._loading = True
+            sb = self.lyrics.verticalScrollBar().value()
+            self.lyrics.setPlainText(song.lyrics)
+            self.lyrics.verticalScrollBar().setValue(sb)
+            self._loading = False
+        self._mark_unsure(song)
+        if refill and 0 <= row < self.review.rowCount():
+            self.review.selectRow(row)
+        self.app.song_edited(song)
+        self._update_buttons()
+
     def _set_start(self, row, t):
         """Move line `row` to start at t (nudge, typed time, stamp, waveform drag)."""
-        song = self.app.current()
         L = self._lines()
         if not (0 <= row < len(L)):
             return
-        l = L[row]
-        l['start'] = round(max(0.0, t), 3)
-        if l.get('inst'):
-            l['auto'] = False      # edited by hand: kept when the ♪ lines are recomputed
-        if row + 1 < len(L):
-            l['end'] = min(l['end'], L[row + 1]['start'])
-        l['end'] = round(max(l['end'], l['start']), 3)
-        if row > 0 and L[row - 1]['end'] > l['start']:
-            L[row - 1]['end'] = round(max(L[row - 1]['start'], l['start']), 3)
-            self._refresh_row(row - 1)
-        song.dirty = True
+        self._edit('Move line %d' % (row + 1), lambda s: edits.set_times(s, row, start=t), tag=('start', row),
+                   select=row, refill=False)
+        self._refresh_row(row - 1)
         self._refresh_row(row)
+
+    def _refresh_row(self, row):
+        L = self._lines()
+        if 0 <= row < len(L) and self.review.item(row, 2):
+            self.review.blockSignals(True)
+            for c, k in ((2, 'start'), (3, 'end')):
+                it = self.review.item(row, c)
+                it.setText(fmt_lrc_time(L[row][k]))
+                it.setData(GlassRowDelegate.TIME_ROLE, L[row][k])
+            self.review.blockSignals(False)
+        self.wave.set_lines(L, self.review.currentRow())
 
     def _nudge(self, delta):
         row = self.review.currentRow()
@@ -1018,17 +1127,192 @@ class GlassWindow(QWidget, chrome.Frame):
         if 0 <= row < len(L):
             self._set_start(row, L[row]['start'] + delta)
 
-    def _time_edited(self, item):
-        if item.column() != 2 or getattr(self, '_loading', False):
-            return
+    def _cell_edited(self, row, col, text):
+        """In-place edit committed (Enter / focus out) in the line, start or end column."""
         L = self._lines()
-        if not (0 <= item.row() < len(L)):
+        if not (0 <= row < len(L)):
             return
-        t = parse_time(item.text())
-        if t is None:
-            self._refresh_row(item.row())
+        if col == 1:
+            self.set_line_text(row, text)
+        elif col in (2, 3):
+            t = parse_time(text)
+            if t is None:
+                self.status_lbl.setText('Times are mm:ss.xxx, for example 01:02.345.')
+                self._refresh_row(row)
+                return
+            key = 'start' if col == 2 else 'end'
+            if key == 'end' and t <= L[row]['start']:
+                self.status_lbl.setText('The end must be after the start (%s).' % fmt_lrc_time(L[row]['start']))
+                self._refresh_row(row)
+                return
+            self._edit('%s of line %d' % (key.title(), row + 1), lambda s: edits.set_times(s, row, **{key: t}), select=row)
+            self.status_lbl.setText('Line %d now %s at %s · Ctrl+Z to undo' % (row + 1, 'starts' if key == 'start' else 'ends',
+                                                                               fmt_lrc_time(t)))
+
+    def set_line_text(self, row, text, realign=False):
+        L = self._lines()
+        old = L[row]['text']
+        n = self._edit('Edit line %d' % (row + 1), lambda s: edits.set_text(s, row, text), select=row)
+        if n:
+            from .dialogs import words_changed
+            more = ' (and %d repeat%s)' % (n - 1, 's' if n > 2 else '') if n > 1 else ''
+            hint = ''
+            if not realign and words_changed(old, text) >= 0.4:
+                hint = ' Many words changed: right-click → Re-align this line to fix its timing.'
+            self.status_lbl.setText('Line %d edited%s · Ctrl+Z to undo.%s' % (row + 1, more, hint))
+        elif not str(text).strip():
+            self.status_lbl.setText('A line needs at least one word (use Delete line to remove it).')
+        if realign:
+            self.realign_line(row)
+        return n
+
+    def edit_line(self, row=None):
+        """F2: edit the words of the selected line in place."""
+        row = self.review.currentRow() if row is None else row
+        L = self._lines()
+        if not (0 <= row < len(L)) or L[row].get('inst') or self.app.busy:
+            return False
+        it = self.review.item(row, 1)
+        self.review.setCurrentItem(it)
+        self.review.editItem(it)
+        return True
+
+    def edit_line_dialog(self, row=None, exec_=True):
+        """Edit Line…: words, Start / End, Play line, Re-align."""
+        from .dialogs import EditLineDialog
+        row = self.review.currentRow() if row is None else row
+        L = self._lines()
+        if not (0 <= row < len(L)) or self.app.busy:
+            return None
+        l = L[row]
+        if l.get('inst'):
+            l = dict(l)
+        d = EditLineDialog(self, l, row + 1, play=self.play_range, can_realign=not l.get('inst'))
+        if L[row].get('inst'):
+            d.text.setReadOnly(True)
+            d.text.setToolTip('A ♪ line shows the ♪ symbol (♪ settings…); use Unmark ♪ to give it words')
+            d.btn_split.setEnabled(False)
+        if not exec_:
+            return d
+        ok = d.exec()
+        self.stop_range()
+        if ok:
+            self.apply_line_dialog(row, d)
+        return d
+
+    def apply_line_dialog(self, row, d):
+        L = self._lines()
+        text, start, end, realign = d.values()
+        if d.split_cursor is not None:
+            def fn(s):
+                edits.set_text(s, row, text)
+                return edits.split(s, row, cursor=d.split_cursor)
+            r2 = self._edit('Split line %d' % (row + 1), fn, select=row)
+            if r2:
+                self.status_lbl.setText('Line %d split in two · Ctrl+Z to undo' % (row + 1))
             return
-        self._set_start(item.row(), t)
+        old = (L[row]['text'], L[row]['start'], L[row]['end'])
+
+        def fn(s):
+            if not L[row].get('inst'):
+                edits.set_text(s, row, text)
+            edits.set_times(s, row, start=start, end=end)
+        self._edit('Edit line %d' % (row + 1), fn, select=row)
+        if (text, start, end) != old:
+            self.status_lbl.setText('Line %d saved · Ctrl+Z to undo' % (row + 1))
+        if realign:
+            self.realign_line(row)
+
+    def split_line(self, row, cursor=None, text=None):
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return None
+        t = self.position()
+        at = t if L[row]['start'] < t < L[row]['end'] and cursor is None else None
+
+        def fn(s):
+            if text is not None:
+                edits.set_text(s, row, text)
+            return edits.split(s, row, cursor=cursor, at_time=at)
+        r2 = self._edit('Split line %d' % (row + 1), fn, select=row)
+        if r2:
+            self.status_lbl.setText('Line %d split at %s%s · Ctrl+Z to undo' % (
+                row + 1, fmt_lrc_time(self._lines()[r2]['start']), ' (the playhead)' if at is not None else ''))
+        else:
+            self.status_lbl.setText('This line has only one word: nothing to split.')
+        return r2
+
+    def merge_line(self, row):
+        if self._edit('Merge lines %d and %d' % (row + 1, row + 2), lambda s: edits.merge(s, row), select=row):
+            self.status_lbl.setText('Lines %d and %d merged · Ctrl+Z to undo' % (row + 1, row + 2))
+
+    def insert_line(self, row, below=True, edit=True):
+        r = self._edit('Insert line', lambda s: edits.insert(s, row, below=below, duration=self.duration()))
+        if r is not None:
+            self.review.selectRow(r)
+            self.status_lbl.setText('New line %d at %s: type its words · Ctrl+Z to undo' % (r + 1, fmt_lrc_time(self._lines()[r]['start'])))
+            if edit:
+                QTimer.singleShot(0, lambda: self.edit_line(r))
+        return r
+
+    def delete_line(self, row=None):
+        row = self.review.currentRow() if row is None else row
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return False
+        inst = bool(L[row].get('inst'))
+        ok = self._edit('Delete line %d' % (row + 1), lambda s: edits.delete(s, row), select=min(row, len(L) - 2))
+        if ok:
+            self.status_lbl.setText('%s removed · Ctrl+Z to undo' % ('♪ line' if inst else 'Line %d' % (row + 1)))
+        return bool(ok)
+
+    def _delete_inst(self, row=None):
+        return self.delete_line(row)
+
+    def mark_inst(self, row):
+        if self._edit('Mark line %d as ♪' % (row + 1), lambda s: edits.mark_inst(s, row, self.app.settings), select=row):
+            self.status_lbl.setText('Line %d is now a ♪ line · Unmark ♪ brings the words back' % (row + 1))
+
+    def unmark_inst(self, row):
+        t = self._edit('Unmark ♪', lambda s: edits.unmark_inst(s, row), select=row)
+        if t:
+            self.status_lbl.setText('Line %d is a sung line again (“%s”)' % (row + 1, t))
+            if t == 'New line':
+                QTimer.singleShot(0, lambda: self.edit_line(row))
+
+    def realign_line(self, row):
+        song = self.app.current()
+        L = self._lines()
+        if not song or not (0 <= row < len(L)) or L[row].get('inst') or self.app.busy:
+            return
+        self.app.realign(song, row)
+
+    def undo(self):
+        self._history_step(True)
+
+    def redo(self):
+        self._history_step(False)
+
+    def _history_step(self, back):
+        song = self.app.current()
+        if not song or self.app.busy:
+            return False
+        if self.review.state() == QAbstractItemView.State.EditingState:
+            return False
+        h = edits.history(song)
+        row = self.review.currentRow()
+        label = h.undo(song) if back else h.redo(song)
+        if label is None:
+            self.status_lbl.setText('Nothing to %s.' % ('undo' if back else 'redo'))
+            return False
+        self.after_edit(song, min(row, len(self._lines()) - 1))
+        self.app.song_edited(song)
+        self.status_lbl.setText('%s: %s' % ('Undone' if back else 'Redone', label or 'change'))
+        return True
+
+    def _time_edited(self, item):   # 1.3.0 API (typed start in the list): kept for the selftest
+        if item.column() in (2, 3):
+            self._cell_edited(item.row(), item.column(), item.text())
 
     def _retime(self, row, t):
         self.review.selectRow(row)
@@ -1052,24 +1336,15 @@ class GlassWindow(QWidget, chrome.Frame):
         t = self.position()
         if t <= 0.0 and self.review.currentRow() >= 0:
             t = self._lines()[self.review.currentRow()]['end']
-        row = instrumental.insert(song.result, t, self.app.settings)
-        song.dirty = True
-        self._fill_review(song)
-        self.review.selectRow(row)
-        self.status_lbl.setText('Added a ♪ line at %s' % fmt_lrc_time(t))
 
-    def _delete_inst(self, row=None):
-        song = self.app.current()
-        row = self.review.currentRow() if row is None else row
-        if not song or not song.result or not (0 <= row < len(song.result['lines'])):
-            return False
-        if not instrumental.delete(song.result, row):
-            return False
-        song.dirty = True
-        self._fill_review(song)
-        self.review.selectRow(min(row, self.review.rowCount() - 1))
-        self.status_lbl.setText('♪ line removed')
-        return True
+        def fn(s):
+            r = instrumental.insert(s.result, t, self.app.settings)
+            s.edited = True
+            return r
+        row = self._edit('Insert ♪', fn)
+        if row is not None:
+            self.review.selectRow(row)
+            self.status_lbl.setText('Added a ♪ line at %s' % fmt_lrc_time(t))
 
     def _inst_settings(self):
         from .dialogs import MusicDialog
@@ -1161,6 +1436,7 @@ class GlassWindow(QWidget, chrome.Frame):
         self._seek(self.position() + dt)
 
     def toggle_play(self):
+        self._stop_at = None
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
             return
@@ -1171,6 +1447,19 @@ class GlassWindow(QWidget, chrome.Frame):
         elif self._pending_seek is None and abs(self.player.position() / 1000.0 - self.position()) > 0.05:
             self.player.setPosition(int(round(self.position() * 1000)))
         self.player.play()
+
+    def play_range(self, start, end):
+        """Play from start and pause at end (Edit Line → Play line)."""
+        self._stop_at = end
+        self._seek(start)
+        if self.player.playbackState() != QMediaPlayer.PlayingState and self._ensure_source():
+            self.player.play()
+
+    def stop_range(self):
+        if getattr(self, '_stop_at', None) is not None:
+            self._stop_at = None
+            if self.player.playbackState() == QMediaPlayer.PlayingState:
+                self.player.pause()
 
     def _play_row(self, row):
         L = self._lines()
@@ -1204,6 +1493,11 @@ class GlassWindow(QWidget, chrome.Frame):
         p0, t0 = self._pos_anchor
         rate = self.speed.currentData() or 1.0
         t = p0 + min(0.25, (_now() - t0)) * rate
+        stop = getattr(self, '_stop_at', None)
+        if stop is not None and t >= stop:
+            self._stop_at = None
+            self.player.pause()
+            t = stop
         self._show_position(t, playing=True)
 
     def _show_position(self, t, playing=False):
@@ -1257,6 +1551,13 @@ class GlassWindow(QWidget, chrome.Frame):
 
     def handle_key(self, k, mods=Qt.NoModifier):
         """Player/review shortcuts (not while typing). True when the key was used."""
+        if mods & Qt.ControlModifier and not mods & (Qt.AltModifier | Qt.MetaModifier) and self._lines():
+            if k == Qt.Key_Z:
+                self._history_step(not mods & Qt.ShiftModifier)
+                return True
+            if k == Qt.Key_Y:
+                self._history_step(False)
+                return True
         if mods & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
             return False
         in_queue = QApplication.focusWidget() is self.queue
@@ -1279,7 +1580,12 @@ class GlassWindow(QWidget, chrome.Frame):
             self.stamp()
             return True
         if k == Qt.Key_Delete and has and not in_queue:
-            return self._delete_inst()
+            return self.delete_line()
+        if k == Qt.Key_F2 and has and not in_queue:
+            return self.edit_line()
+        if k in (Qt.Key_Return, Qt.Key_Enter) and has and not in_queue and QApplication.focusWidget() is self.review:
+            self.edit_line_dialog()
+            return True
         if k == Qt.Key_Escape and self.isFullScreen():
             self._toggle_full()
             return True

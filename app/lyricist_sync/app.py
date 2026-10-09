@@ -10,7 +10,7 @@ import uuid
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from . import bootstrap, instrumental, paths, theme as thememod, updater
+from . import bootstrap, edits, instrumental, paths, theme as thememod, updater
 from .engine_client import EngineClient
 from .export import export_song, read_tags, target_dir
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
@@ -22,6 +22,11 @@ AUDIO_EXT = ('.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wma')
 STAGES = {'decode': 'Reading audio', 'separate': 'Separating vocals', 'transcribe': 'Listening for repeats',
           'align': 'Aligning lines'}
 ISO_FROM_WHISPER = {v[0]: v[1] for v in LANGS.values() if v[0]}
+
+
+def _t(t):
+    from .formats import fmt_lrc_time
+    return fmt_lrc_time(t)
 
 
 class _UpdSignal(QObject):
@@ -43,6 +48,8 @@ class Song:
         self.result = None
         self.dirty = False
         self.job = 'sync'            # what the queued run does: 'sync' or 'transcribe'
+        self.edited = False          # lines edited by hand in the review list (asked before replacing them)
+        self.history = edits.History()
 
     def label(self):
         t = self.tags.get('title') or os.path.splitext(os.path.basename(self.path))[0]
@@ -121,6 +128,7 @@ class App:
         """Re-place the ♪ lines of synced songs after the ♪ settings changed."""
         for s in songs or self.songs:
             if s.result:
+                edits.history(s).push(s, '♪ settings')
                 instrumental.apply(s.result, self.settings)
                 s.dirty = True
         if self.current() and self.current().result:
@@ -163,29 +171,76 @@ class App:
         dlg.exec()
         return bootstrap.is_ready()
 
+    def keep_edits(self, songs, action):
+        """Songs whose lines were edited by hand are only replaced after "Replace". Returns the songs to run."""
+        edited = [s for s in songs if s.edited and s.result]
+        if not edited or self.busy:
+            return songs
+        if self.win.ask_keep_edits(edited, action) == 'replace':
+            return songs
+        kept = [s for s in songs if s not in edited]
+        self.win.status_lbl.setText('Kept your edits%s.' % ('' if not kept else ' (%d song%s skipped)' % (
+            len(edited), '' if len(edited) == 1 else 's')))
+        return kept
+
     def sync_current(self):
         s = self.current()
         if not s:
             return
-        if split_lines(s.lyrics):
-            self._start([s])
-        else:   # no lyrics yet: transcribe, then the user fixes the words and syncs
-            self._start([s], 'transcribe')
+        job = 'sync' if split_lines(s.lyrics) else 'transcribe'   # no lyrics yet: transcribe first
+        if self.keep_edits([s], job):
+            self._start([s], job)
 
     def sync_all(self):
-        self._start([s for s in self.songs if split_lines(s.lyrics)])
+        self._start(self.keep_edits([s for s in self.songs if split_lines(s.lyrics)], 'sync'))
 
     def transcribe_current(self):
         s = self.current()
         if s:
-            if split_lines(s.lyrics) and s.lyrics_src != 'transcribe' and not self.win.confirm(
+            if s.edited and s.result:
+                if not self.keep_edits([s], 'transcribe'):
+                    return
+            elif split_lines(s.lyrics) and s.lyrics_src != 'transcribe' and not self.win.confirm(
                     'Transcribe', 'Replace the lyrics of this song with what Whisper hears?\n'
-                    'Your current text is kept in the undo history of the lyrics box (Ctrl+Z).'):
+                    'Ctrl+Z in the line list brings the current lines and text back.'):
                 return
             self._start([s], 'transcribe')
 
     def transcribe_all(self):
-        self._start([s for s in self.songs if not split_lines(s.lyrics)], 'transcribe')
+        self._start(self.keep_edits([s for s in self.songs if not split_lines(s.lyrics)], 'transcribe'), 'transcribe')
+
+    def song_edited(self, s):
+        """After an edit / undo: the queue row shows the lyric line count."""
+        if s in self.songs:
+            i = self.songs.index(s)
+            item = self.win.queue.item(i, 1)
+            if item:
+                item.setText('%d lines' % len(split_lines(s.lyrics)) if s.lyrics.strip() else '—')
+
+    def realign(self, s, row):
+        """Re-run the aligner for one line (after its words changed), between its neighbours."""
+        if self.busy or not s.result or not self.ensure_engine():
+            return
+        lines = s.result['lines']
+        if not (0 <= row < len(lines)) or lines[row].get('inst'):
+            return
+        lo, hi = edits.realign_window(lines, row, s.result.get('duration'))
+        lang, iso = resolve_lang(s.lang, split_lines(s.lyrics))
+        if not iso and s.iso:
+            iso = s.iso
+        job = {'cmd': 'realign', 'id': s.id, 'audio': s.path, 'text': lines[row]['text'], 'lo': lo, 'hi': hi,
+               'row': row, 'iso': iso, 'lang': lang, 'whisper': self.whisper_effective()}
+        self.busy = True
+        self.queue = [s]
+        s.job = 'realign'
+        self._realign_was = s.status
+        s.status = 'Re-aligning line %d' % (row + 1)
+        self._set_row(s)
+        self.win.set_busy(True, '%s · re-aligning line %d' % (s.label(), row + 1), 0.0)
+        try:
+            self.engine.submit(job)
+        except OSError as e:
+            self._error(s.id, 'Engine could not start: %s' % e)
 
     # ---------------------------------------------------------------- Whisper model (Engine settings)
     def hardware(self):
@@ -319,6 +374,28 @@ class App:
 
     def _result(self, sid, res):
         s = self._find(sid)
+        if s and res.get('realign') and s.result:
+            row = res.get('row')
+            L = s.result['lines']
+            s.status = getattr(self, '_realign_was', '') or s.status
+            s.job = 'sync'
+            if row is not None and 0 <= row < len(L) and L[row]['text'] == res.get('text'):
+                old = L[row]['start']
+                edits.history(s).push(s, 'Re-align line %d' % (row + 1))
+                edits.apply_realign(s, row, res['start'], res['end'], res.get('conf'), res.get('why'))
+                if s is self.current():
+                    self.win.after_edit(s, row)
+                self.win.status_lbl.setText('Line %d re-aligned: %s → %s (%d%% sure) · Ctrl+Z to undo' % (
+                    row + 1, _t(old), _t(res['start']), round(100 * (res.get('conf') or 0))))
+            else:
+                self.win.status_lbl.setText('The line changed while it was re-aligned; nothing applied.')
+            self._set_row(s)
+            self._pop(sid)
+            return
+        if s and s.result and (res.get('mode') in ('transcribe', 'sync') or 'from' in res):
+            edits.history(s).push(s, {'transcribe': 'Transcribe'}.get(res.get('mode'), 'Re-sync' if 'from' in res else 'Auto-sync'))
+            if 'from' not in res:
+                s.edited = False
         if s and 'from' in res and s.result:
             k0 = res['from']
             sung = instrumental.sung(s.result['lines'])
@@ -379,7 +456,9 @@ class App:
     def _error(self, sid, msg):
         s = self._find(sid)
         if s:
-            s.status = 'Error'
+            s.status = (getattr(self, '_realign_was', '') or 'Error') if s.job == 'realign' else 'Error'
+            if s.job == 'realign':
+                s.job = 'sync'
             self._set_row(s)
             self.win.status_lbl.setText('%s: %s' % (s.label(), msg[:160]))
         self._pop(sid)

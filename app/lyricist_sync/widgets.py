@@ -289,12 +289,68 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem 
 
 class GlassRowDelegate(QStyledItemDelegate):
     """Rounded, readable row selection/hover spanning the whole row, and a mini rounded
-    progress bar in the status column while a song is syncing ('Aligning lines 72%')."""
+    progress bar in the status column while a song is syncing ('Aligning lines 72%').
+    Review list: in-place editing of the line text (col 1) and the times (cols 2, 3, as
+    mm:ss.xxx). The edit is not written to the item: `edited(row, col, text)` is emitted and the
+    window applies it (undo history, lyrics box, waveform). `split(row, cursor, text)` comes from
+    the editor's right-click "Split line at cursor"."""
+    edited = Signal(int, int, str)
+    split = Signal(int, int, str)
+    TIME_ROLE = Qt.UserRole + 3     # seconds of the start / end cells
 
     def __init__(self, view, progress_col=None):
         super().__init__(view)
         self.view = view
         self.progress_col = progress_col
+        self.editor = None
+
+    def createEditor(self, parent, opt, idx):
+        from PySide6.QtWidgets import QLineEdit
+        e = QLineEdit(parent)
+        e.setObjectName('inlineEdit')
+        e.setFrame(False)
+        if idx.column() in (2, 3):
+            e.setAlignment(Qt.AlignCenter)
+            e.setToolTip('mm:ss.xxx — Enter saves, Esc cancels')
+        else:
+            e.setToolTip('Enter saves, Esc cancels · right-click: Split line at cursor')
+            e.setContextMenuPolicy(Qt.CustomContextMenu)
+            e.customContextMenuRequested.connect(lambda pos, e=e, r=idx.row(): self._editor_menu(e, r, pos))
+        self.editor = e
+        e.destroyed.connect(lambda *_a: setattr(self, 'editor', None))
+        return e
+
+    def _editor_menu(self, e, row, pos):
+        m = e.createStandardContextMenu()
+        m.addSeparator()
+        a = m.addAction('Split line at cursor')
+        a.setEnabled(bool(e.text().strip()) and 0 < e.cursorPosition() < len(e.text()))
+        a.triggered.connect(lambda: self._split_now(e, row))
+        m.exec(e.mapToGlobal(pos))
+
+    def _split_now(self, e, row):
+        cur, text = e.cursorPosition(), e.text()
+        self.closeEditor.emit(e, QStyledItemDelegate.EndEditHint.RevertModelCache)
+        self.split.emit(row, cur, text)
+
+    def setEditorData(self, e, idx):
+        if idx.column() in (2, 3):
+            t = idx.data(self.TIME_ROLE)
+            if t is not None:
+                ms = int(round(float(t) * 1000))
+                e.setText('%02d:%02d.%03d' % (ms // 60000, (ms % 60000) // 1000, ms % 1000))
+            else:
+                e.setText(str(idx.data() or ''))
+        else:
+            t = str(idx.data() or '')
+            e.setText(t[2:] if t.startswith('↻ ') else t)
+        e.selectAll()
+
+    def setModelData(self, e, model, idx):
+        self.edited.emit(idx.row(), idx.column(), e.text())
+
+    def updateEditorGeometry(self, e, opt, idx):
+        e.setGeometry(opt.rect.adjusted(2, 3, -2, -3))
 
     def paint(self, p, opt, idx):
         view = self.view

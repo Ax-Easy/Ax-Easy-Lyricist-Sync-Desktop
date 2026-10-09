@@ -993,3 +993,186 @@ class EngineDialog(GlassDialog):
             self.dl.cancel.set()
             self.thread.join(3)
         super().reject()
+
+
+def fmt_edit_time(t):
+    """mm:ss.xxx for the time fields of the Edit Line dialog and the inline editor."""
+    ms = int(round(max(0.0, t) * 1000))
+    return '%02d:%02d.%03d' % (ms // 60000, (ms % 60000) // 1000, ms % 1000)
+
+
+def words_changed(a, b):
+    """Share of words that differ between two versions of a line (0..1)."""
+    import difflib
+    wa, wb = a.lower().split(), b.lower().split()
+    if not wa and not wb:
+        return 0.0
+    return 1.0 - difflib.SequenceMatcher(None, wa, wb).ratio()
+
+
+class EditLineDialog(GlassDialog):
+    """Edit Line…: the words, Start and End (mm:ss.xxx with ±0.1 / ±0.01), Play line, Re-align.
+    Enter saves, Esc cancels. After exec(): values() -> (text, start, end, realign), or
+    self.split_cursor (int) when "Split at cursor" was pressed."""
+    REALIGN_AT = 0.4    # this share of the words changed: Re-align is ticked for you
+
+    def __init__(self, parent, line, number, play=None, can_realign=True):
+        from PySide6.QtWidgets import QGridLayout, QLineEdit
+        from .formats import parse_time
+        super().__init__(parent, 'Edit line %d' % number, 600, 330)
+        self._parse = parse_time
+        self.line = line
+        self.play = play
+        self.split_cursor = None
+        self._auto_realign = True
+        self.lay.addWidget(link_label('The words and times of this line. Saving updates the lyrics box, the waveform '
+                                      'and the exported files. <b>Enter</b> saves, <b>Esc</b> cancels.', 'plain'))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(10)
+        lab = QLabel('Line')
+        lab.setObjectName('sub')
+        grid.addWidget(lab, 0, 0)
+        self.text = QLineEdit(line['text'])
+        self.text.setObjectName('editText')
+        self.text.setPlaceholderText('The words of this line')
+        self.text.textChanged.connect(self._text_changed)
+        grid.addWidget(self.text, 0, 1, 1, 6)
+        self.fields = {}
+        for r, (key, label) in enumerate((('start', 'Start'), ('end', 'End')), start=1):
+            lab = QLabel(label)
+            lab.setObjectName('sub')
+            grid.addWidget(lab, r, 0)
+            f = QLineEdit(fmt_edit_time(line[key]))
+            f.setFixedWidth(108)
+            f.setAlignment(Qt.AlignCenter)
+            f.setToolTip('mm:ss.xxx (also ss.xx or m:ss)')
+            f.textChanged.connect(self._validate)
+            self.fields[key] = f
+            grid.addWidget(f, r, 1)
+            for c, (txt, d) in enumerate((('−0.1', -0.1), ('−0.01', -0.01), ('+0.01', 0.01), ('+0.1', 0.1)), start=2):
+                b = PillButton(txt)
+                b.setFixedWidth(58)
+                b.setAutoDefault(False)
+                b.setToolTip('%s %+g s' % (label, d))
+                b.clicked.connect(lambda _=False, k=key, d=d: self._nudge(k, d))
+                grid.addWidget(b, r, c)
+        grid.setColumnStretch(6, 1)
+        self.lay.addLayout(grid)
+        row = QHBoxLayout()
+        self.btn_play = PillButton('▶  Play line')
+        self.btn_play.setAutoDefault(False)
+        self.btn_play.setToolTip('Play this line from Start to End')
+        self.btn_play.clicked.connect(self._play)
+        self.btn_play.setEnabled(play is not None)
+        self.btn_split = PillButton('Split at cursor')
+        self.btn_split.setAutoDefault(False)
+        self.btn_split.setToolTip('Split the line where the text cursor is (the time is divided by the characters)')
+        self.btn_split.clicked.connect(self._split)
+        row.addWidget(self.btn_play)
+        row.addWidget(self.btn_split)
+        row.addStretch(1)
+        self.lay.addLayout(row)
+        self.realign = QCheckBox('Re-align this line after saving (fixes the timing after big word changes)')
+        self.realign.setEnabled(can_realign)
+        self.realign.toggled.connect(lambda _v: setattr(self, '_auto_realign', False))
+        self.lay.addWidget(self.realign)
+        self.err = QLabel('')
+        self.err.setObjectName('hint')
+        self.err.setStyleSheet('color: %s;' % AMBER)
+        self.lay.addWidget(self.err)
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_cancel = PillButton('Cancel')
+        self.btn_cancel.setAutoDefault(False)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_save = PillButton('Save', 'primary')
+        self.btn_save.setDefault(True)
+        self.btn_save.clicked.connect(self._save)
+        for b in (self.btn_cancel, self.btn_save):
+            b.setMinimumWidth(96)
+            row.addWidget(b)
+        self.lay.addLayout(row)
+        self.text.setFocus()
+        self.text.selectAll()
+
+    def _time(self, key):
+        return self._parse(self.fields[key].text())
+
+    def _validate(self, *_a):
+        s, e = self._time('start'), self._time('end')
+        msg = ''
+        if not self.text.text().strip():
+            msg = 'The line needs at least one word.'
+        elif s is None or e is None:
+            msg = 'Times are mm:ss.xxx, for example 01:02.345.'
+        elif e <= s:
+            msg = 'End must be after Start.'
+        self.err.setText(msg)
+        self.btn_save.setEnabled(not msg)
+        return not msg
+
+    def _text_changed(self, t):
+        if self._auto_realign and self.realign.isEnabled():
+            self.realign.blockSignals(True)
+            self.realign.setChecked(words_changed(self.line['text'], t) >= self.REALIGN_AT)
+            self.realign.blockSignals(False)
+        self._validate()
+
+    def _nudge(self, key, d):
+        t = self._time(key)
+        if t is not None:
+            self.fields[key].setText(fmt_edit_time(t + d))
+
+    def _play(self):
+        s, e = self._time('start'), self._time('end')
+        if self.play and s is not None and e is not None:
+            self.play(s, max(e, s + 0.1))
+
+    def _split(self):
+        if self._validate():
+            self.split_cursor = self.text.cursorPosition()
+            self.accept()
+
+    def _save(self):
+        if self._validate():
+            self.accept()
+
+    def values(self):
+        return (self.text.text().strip(), self._time('start'), self._time('end'),
+                self.realign.isChecked() and self.realign.isEnabled())
+
+
+class KeepEditsDialog(GlassDialog):
+    """Transcribe / Auto-sync would replace lines edited by hand: Keep my edits / Replace."""
+
+    def __init__(self, parent, songs, action):
+        super().__init__(parent, 'Replace your edits?', 560, 270)
+        self.choice = 'keep'
+        names = ', '.join('“%s”' % s.label() for s in songs[:3]) + (' and %d more' % (len(songs) - 3) if len(songs) > 3 else '')
+        what = ('Transcribe replaces the lines, words and times with what Whisper hears.' if action == 'transcribe' else
+                'Auto-sync re-aligns every line with the words in the lyrics box (your edited words are kept there), '
+                'but the times you set by hand are replaced.')
+        self.lay.addWidget(link_label('You edited the lines of %s in the review list.<br><br>%s<br><br>'
+                                      'Either way you can undo it with <b>Ctrl+Z</b>.' % (names.replace('<', '&lt;'), what), 'plain'))
+        self.lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_keep = PillButton('Keep my edits')
+        self.btn_keep.clicked.connect(self.reject)
+        self.btn_replace = PillButton('Replace', 'primary')
+        self.btn_replace.clicked.connect(self._replace)
+        for b in (self.btn_keep, self.btn_replace):
+            b.setMinimumWidth(120)
+            row.addWidget(b)
+        self.btn_keep.setDefault(True)
+        self.lay.addLayout(row)
+
+    def _replace(self):
+        self.choice = 'replace'
+        self.accept()
+
+    def reject(self):
+        self.choice = 'keep'
+        super().reject()
