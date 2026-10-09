@@ -9,6 +9,7 @@ import glob
 import json
 import os
 import platform
+import sys
 import tempfile
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
@@ -482,13 +483,15 @@ def _edit(app, win, dark, fixture_dir, label, out_dir, name):
         win.review_delegate.closeEditor.emit(ed, win.review_delegate.EndEditHint.RevertModelCache)
     _pump(0.1)
     # 19: export confirmation (static render with sample paths: 3 songs, one skipped, one failed)
-    base = r'C:\Users\VAG\Music\Monitored' if os.name == 'nt' else '/home/vag/Music/Monitored'
+    base = (r'C:\Users\You\Music\Demos' if os.name == 'nt' else
+            '/Users/you/Music/Demos' if sys.platform == 'darwin' else '/home/you/Music/Demos')
     sep = '\\' if os.name == 'nt' else '/'
     rep = []
-    for lab, sub, status, reason in (('Monitored – Stoned', 'Stoned', 'ok', ''),
+    for lab, sub, status, reason in (('Ax-Easy Tests – Long Intro', 'Long Intro', 'ok', ''),
                                      ('Ax-Easy Δοκιμή – Ήλιος', 'Ήλιος', 'ok', ''),
                                      ('Ax-Easy Demo – Glass Towers', 'Glass Towers', 'skipped', 'the files already exist and you chose Skip'),
-                                     ('Monitored – Static', 'Static', 'failed', 'Access is denied (%s%sStatic%sStatic.lrc)' % (base, sep, sep))):
+                                     ('Ax-Easy Tests – Choir Test', 'Choir Test', 'failed',
+                                      'Access is denied (%s%sChoir Test%sAx-Easy Tests - Choir Test.lrc)' % (base, sep, sep))):
         d0 = base + sep + sub
         files = [d0 + sep + lab.replace(' – ', ' - ') + e for e in ('.ttml', '.lrc', '.srt', '.vtt')] if status == 'ok' else []
         rep.append({'song': None, 'label': lab, 'dir': d0, 'files': files, 'status': status, 'reason': reason})
@@ -506,7 +509,7 @@ def _edit(app, win, dark, fixture_dir, label, out_dir, name):
 
         def label(self):
             return self.t
-    u = unsaved_dialog(win, [_S('Monitored – Stoned'), _S('Ax-Easy Δοκιμή – Ήλιος'), _S('Ax-Easy Demo – Glass Towers')])
+    u = unsaved_dialog(win, [_S('Ax-Easy Tests – Long Intro'), _S('Ax-Easy Δοκιμή – Ήλιος'), _S('Ax-Easy Demo – Glass Towers')])
     u.show()
     _pump(0.2)
     _save(compose_labeled(u, dark, 'Closing with unsaved lyrics: Export all & close / Close without saving / Cancel'),
