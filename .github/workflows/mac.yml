@@ -190,7 +190,7 @@ jobs:
         run: |
           rc=0
           "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --version
-          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --selftest --report selftest-build.json || rc=$?
+          mac/watchdog.sh 600 selftest "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --selftest --report selftest-build.json || rc=$?
           cat selftest-build.json || true
           exit $rc
 
@@ -200,9 +200,10 @@ jobs:
         run: python -X faulthandler -m lyricist_sync --selftest --report ../selftest-src.json; cat ../selftest-src.json || true
 
       - name: Screenshots (native window, dark and light) + maximized
+        continue-on-error: true
         run: |
-          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens screens-mac --fixture tests/fixtures
-          "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens-maximized screens-mac/max --fixture tests/fixtures || echo "::warning::maximized screens failed"
+          mac/watchdog.sh 420 screens "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens screens-mac --fixture tests/fixtures
+          mac/watchdog.sh 300 screens-max "dist/Lyricist Sync.app/Contents/MacOS/LyricistSync" --screens-maximized screens-mac/max --fixture tests/fixtures || echo "::warning::maximized screens failed"
           ls -R screens-mac | head -80
 
       - name: DMG (drag to Applications, Retina background)
@@ -271,6 +272,7 @@ jobs:
           name: mac-build-reports
           path: |
             selftest-*.json
+            stack-*.txt
             notary/*
             screens-mac/**
             build/dmgbg/*
@@ -335,13 +337,13 @@ jobs:
         run: |
           rc=0
           "$BIN" --version
-          "$BIN" --selftest --report selftest-${{ matrix.arch }}.json || rc=$?
+          mac/watchdog.sh 600 selftest "$BIN" --selftest --report selftest-${{ matrix.arch }}.json || rc=$?
           python -c "import json;d=json.load(open('selftest-${{ matrix.arch }}.json'));print('ok', d.get('ok'));[print('FAIL', c) for c in d.get('checks', []) if not c.get('ok')]" || cat selftest-${{ matrix.arch }}.json
           exit $rc
 
       - name: Screenshots on ${{ matrix.arch }}
         run: |
-          "$BIN" --screens screens-${{ matrix.arch }} --fixture tests/fixtures || echo "::warning::screens failed"
+          mac/watchdog.sh 420 screens "$BIN" --screens screens-${{ matrix.arch }} --fixture tests/fixtures || echo "::warning::screens failed"
 
       - name: In-app updater (local server offers 9.9.9 = this DMG; verify signature/Team ID/Gatekeeper, stage the swap)
         if: needs.build.outputs.signed == 'true'
@@ -444,6 +446,7 @@ jobs:
           path: |
             selftest-*.json
             update-test-*.json
+            stack-*.txt
             setup-gui-*.json
             setup-shots-*/**
             screens-*/**

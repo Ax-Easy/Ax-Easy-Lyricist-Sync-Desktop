@@ -263,7 +263,12 @@ def run(report_path=None):
         base = 'http://127.0.0.1:%d/' % httpd.server_address[1]
         man = {'version': '9.9.9', 'date': '2026-10-09', 'notes': '- test', 'url': base + 'Setup-9.9.9.exe',
                'sha256': hashlib.sha256(payload).hexdigest(), 'size': len(payload)}
-        for name, m in (('update.json', man), ('bad.json', dict(man, sha256='0' * 64)), ('old.json', dict(man, version=VERSION))):
+        man_win = dict(man)
+        if updater.IS_MAC:   # the Mac app reads the "mac" entry on top of the Windows top level
+            man['mac'] = {'url': base + 'Setup-9.9.9.exe', 'sha256': man['sha256'], 'size': man['size'],
+                          'minimum_os': {'arm64': '11.0', 'x86_64': '12.0'}}
+        for name, m in (('update.json', man), ('bad.json', dict(man, sha256='0' * 64)), ('old.json', dict(man, version=VERSION)),
+                        ('nomac.json', man_win)):
             with open(os.path.join(srv_dir, name), 'w') as f:
                 json.dump(m, f)
         old = os.environ.get('LYRICIST_SYNC_UPDATE_TEST')
@@ -273,6 +278,9 @@ def run(report_path=None):
             out['available'] = updater.check(VERSION, base + 'update.json')['status']
             out['current'] = updater.check(VERSION, base + 'old.json')['status']
             out['notfound'] = updater.check(VERSION, base + 'nope.json')['status']
+            if updater.IS_MAC:   # a manifest with only the Windows installer: nothing for this Mac
+                nm = updater.check(VERSION, base + 'nomac.json')['status']
+                assert nm == 'notfound', 'manifest without a mac entry: %s' % nm
             out['offline'] = updater.check(VERSION, 'http://127.0.0.1:9/update.json', timeout=3)['status']
             path = updater.download(man)
             out['download'] = os.path.getsize(path) == len(payload)
