@@ -655,7 +655,7 @@ def render(out_dir, fixture_dir=None):
                 _save(compose_labeled(a, dark, 'About (Windows 10 path)'), os.path.join(out_dir, '%s_4_about.png' % name))
                 a.close()
                 man = {'version': '1.2.0', 'date': '2026-11-02', 'size': 41500000, 'sha256': 'a' * 64,
-                       'url': 'https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.2.0.exe',
+                       'url': 'https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.2.0/AxEasy-LyricistSync-Desktop-Setup-1.2.0.exe',
                        'notes': '### What\'s new\n- Faster vocal separation on NVIDIA GPUs\n- Better timing for whispered lines\n'
                                 '- Fixes for very long songs'}
                 u = UpdateDialog(win, app, {'status': 'available', 'manifest': man, 'message': ''})

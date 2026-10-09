@@ -1,13 +1,14 @@
-"""Write update.json for the in-app updater from a built installer.
+"""Write an update.json for the OPTIONAL manifest fallback of the in-app updater (off by default;
+the app normally reads GitHub Releases and needs no update.json at all).
 
   python tools/make_update_json.py dist-installer/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe \
-      [--base https://www.ax-easy.com/lyricist-sync/] [--version 1.3.1] [--out dist-installer/update.json]
+      --base https://example.org/downloads/ [--version 1.3.1] [--out dist-installer/update.json]
       [--mac AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg [--mac-base URL]]
 
 The top level is the Windows installer (what 1.0-1.3.x clients read); "mac" is the entry the macOS app
 overlays on it (url, sha256, size, minimum_os per architecture).
 
-Publishing: upload the Setup exe and update.json to /lyricist-sync/ on ax-easy.com."""
+The app uses it only when "update_url" (settings.json) or LYRICIST_SYNC_UPDATE_URL points at it."""
 import argparse
 import datetime
 import hashlib
@@ -42,7 +43,7 @@ def main(argv=None):
     from lyricist_sync import VERSION
     ap = argparse.ArgumentParser()
     ap.add_argument('installer')
-    ap.add_argument('--base', default='https://www.ax-easy.com/lyricist-sync/')
+    ap.add_argument('--base', required=True, help='download folder of the installer (HTTPS)')
     ap.add_argument('--version', default=VERSION)
     ap.add_argument('--date', default=datetime.date.today().isoformat())
     ap.add_argument('--notes', default=None, help='default: the CHANGELOG.md section of the version')

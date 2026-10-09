@@ -1,16 +1,22 @@
-"""In-app updates from a static manifest on the publisher's own site (no GitHub API, no token).
+"""In-app updates from the GitHub Releases of the public repository (no token, no ax-easy.com).
 
-update.json: {"version": "1.1.0", "date": "2026-10-09", "notes": "markdown or plain text",
-              "url": "https://www.ax-easy.com/lyricist-sync/AxEasy-LyricistSync-Setup-1.1.0.exe",
-              "sha256": "<64 hex>", "size": 41000000, "minimum_os": "10.0.17763",
-              "mac": {"url": "https://.../AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg", "sha256": "<64 hex>",
-                      "size": 150000000, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
-The top level is the Windows installer (what 1.1-1.3 read); a Mac reads the "mac" entry. On a Mac
-the update is a notarized DMG: after the SHA256 check the app mounts it, checks the new app's
-signature (same Developer ID team) and Gatekeeper assessment, and either replaces itself in place
-(when its folder is writable) or opens the DMG for a drag to Applications.
+The app asks https://api.github.com/repos/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest
+(unauthenticated, with a User-Agent and an ETag cache, so repeated checks cost no rate limit).
+GitHub never returns drafts or prereleases there, and they are ignored anyway. The version comes
+from tag_name (vX.Y.Z) and the release notes from the release body (markdown).
+The download is the asset whose name matches this platform:
+  Windows: AxEasy-LyricistSync-Desktop-Setup-*.exe     Mac: *-mac-universal.dmg
+Its SHA256 comes from the SHA256SUMS asset of the same release; an update without a matching
+line is refused. On a Mac the update is a notarized DMG: after the SHA256 check the app mounts it,
+checks the new app's signature (same Developer ID team) and Gatekeeper assessment, and either
+replaces itself in place (when its folder is writable) or opens the DMG for a drag to Applications.
+
+Optional fallback (off by default): a static update.json manifest, used only when an address is
+configured (settings "update_url" or LYRICIST_SYNC_UPDATE_URL) and GitHub can't be reached.
+update.json: {"version", "date", "notes", "url", "sha256", "size", "minimum_os", "mac": {...}}.
+
 Only HTTPS is accepted (plain HTTP on 127.0.0.1/localhost only when LYRICIST_SYNC_UPDATE_TEST=1,
-for the CI test server). Downloads resume and are SHA256-verified before anything runs.
+for the CI test servers). Downloads resume and are SHA256-verified before anything runs.
 No Qt here: the GUI and the CLI test share it."""
 import hashlib
 import json
@@ -27,7 +33,13 @@ import urllib.request
 
 from . import paths
 
-DEFAULT_URL = 'https://www.ax-easy.com/lyricist-sync/update.json'
+REPO = 'Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop'
+GITHUB_API = 'https://api.github.com/repos/%s/releases/latest' % REPO
+RELEASES_PAGE = 'https://github.com/%s/releases' % REPO
+DEFAULT_URL = ''                 # optional update.json fallback: none unless configured
+ASSET_WIN = re.compile(r'^AxEasy-LyricistSync-Desktop-Setup-[0-9][0-9A-Za-z.\-]*\.exe$')
+ASSET_MAC = re.compile(r'^.+-mac-universal\.dmg$')
+SUMS_NAME = 'SHA256SUMS'
 IS_MAC = sys.platform == 'darwin'
 TEAM_ID = '7BMSHL4YZ6'           # Developer ID team that signs the Mac app
 UA = 'AxEasy-LyricistSync-Updater'
@@ -43,7 +55,22 @@ class Cancelled(Exception):
 
 
 def manifest_url(settings=None):
+    """The optional update.json fallback ('' = none, the default)."""
     return (os.environ.get('LYRICIST_SYNC_UPDATE_URL') or (settings or {}).get('update_url') or DEFAULT_URL).strip()
+
+
+def api_url(settings=None):
+    """The GitHub "latest release" endpoint (a local mock in the CI tests)."""
+    return (os.environ.get('LYRICIST_SYNC_UPDATE_API') or (settings or {}).get('update_api') or GITHUB_API).strip()
+
+
+def is_release_api(url):
+    return '/releases/' in urllib.parse.urlparse(url or '').path
+
+
+def check_for(current, settings=None, timeout=10):
+    """What the app calls: GitHub Releases, then the configured update.json (if any) when GitHub fails."""
+    return check(current, api_url(settings), timeout, fallback=manifest_url(settings))
 
 
 def parse_version(v):
@@ -76,13 +103,183 @@ def _get(url, timeout):
         return r.read(256 * 1024)
 
 
-def check(current, url=None, timeout=10):
-    """-> dict(status=available|current|notfound|offline|invalid|insecure, message, manifest).
-    Never raises."""
-    url = url or DEFAULT_URL
-    res = {'status': 'invalid', 'message': '', 'manifest': None, 'url': url, 'current': current}
+def check(current, url=None, timeout=10, fallback=None):
+    """-> dict(status=available|current|notfound|offline|invalid|insecure, message, manifest, source).
+    `url`: a GitHub "releases/latest" endpoint (default) or, for an explicit manifest, an update.json.
+    `fallback`: an update.json tried when GitHub can't be reached or has nothing usable. Never raises."""
+    url = (url or GITHUB_API).strip()
+    if not is_release_api(url):
+        return check_manifest(current, url, timeout)
+    res = check_github(current, url, timeout)
+    if fallback and res['status'] in ('offline', 'notfound', 'invalid'):
+        fb = check_manifest(current, fallback, timeout)
+        if fb['status'] in ('available', 'current'):
+            fb['github'] = {k: res[k] for k in ('status', 'message')}
+            return fb
+    return res
+
+
+def _cache_path():
+    return os.path.join(updates_dir(), 'github-release.json')
+
+
+def _load_cache(url):
+    try:
+        with open(_cache_path(), encoding='utf-8') as f:
+            c = json.load(f)
+        return c if c.get('url') == url and c.get('etag') and isinstance(c.get('release'), dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _save_cache(url, etag, release):
+    try:
+        with open(_cache_path(), 'w', encoding='utf-8') as f:
+            json.dump({'url': url, 'etag': etag, 'release': release, 'time': time.time()}, f)
+    except OSError:
+        pass
+
+
+def _rate_limit_message(headers):
+    reset = (headers or {}).get('X-RateLimit-Reset') or (headers or {}).get('x-ratelimit-reset')
+    when = ''
+    try:
+        when = ' after %s' % time.strftime('%H:%M', time.localtime(int(reset)))
+    except (TypeError, ValueError):
+        retry = (headers or {}).get('Retry-After')
+        if retry and str(retry).isdigit():
+            when = ' in %d minutes' % max(1, int(retry) // 60)
+    return ("GitHub's limit for update checks from this network was reached. Please try again%s." % (when or ' later'))
+
+
+def fetch_release(url, timeout=10):
+    """GET the release JSON with the ETag cache. -> (release dict, from_cache). Raises urllib errors."""
+    hdr = {'User-Agent': UA, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+    cached = _load_cache(url)
+    if cached:
+        hdr['If-None-Match'] = cached['etag']
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=timeout) as r:
+            data = r.read(2 * 1024 * 1024)
+            etag = r.headers.get('ETag')
+    except urllib.error.HTTPError as e:
+        if e.code == 304 and cached:
+            return cached['release'], True
+        raise
+    rel = json.loads(data.decode('utf-8-sig'))
+    if etag and isinstance(rel, dict):
+        _save_cache(url, etag, rel)
+    return rel, False
+
+
+def release_entry(rel, mac=None):
+    """A GitHub release -> manifest-like dict (version, date, notes, url, size, name, sums_url),
+    None for a draft/prerelease. Raises UpdateError when it isn't a usable release."""
+    mac = IS_MAC if mac is None else mac
+    if not isinstance(rel, dict):
+        raise UpdateError('not a release')
+    if rel.get('draft') or rel.get('prerelease'):
+        return None
+    tag = str(rel.get('tag_name') or '').strip()
+    mv = re.fullmatch(r'[vV]?(\d+(?:\.\d+){1,3})', tag)
+    if not mv:
+        raise UpdateError('the release tag "%s" is not a version' % tag[:40])
+    pat = ASSET_MAC if mac else ASSET_WIN
+    assets = [a for a in (rel.get('assets') or []) if isinstance(a, dict)]
+    asset = next((a for a in assets if pat.match(str(a.get('name') or ''))), None)
+    sums = next((a for a in assets if a.get('name') == SUMS_NAME), None)
+    out = {'version': mv.group(1), 'date': str(rel.get('published_at') or '')[:10], 'notes': str(rel.get('body') or ''),
+           'page': rel.get('html_url') or RELEASES_PAGE, 'url': None, 'size': 0, 'name': None,
+           'sums_url': sums.get('browser_download_url') if sums else None}
+    if asset:
+        out.update(url=asset.get('browser_download_url'), size=asset.get('size') or 0, name=asset.get('name'))
+    return out
+
+
+def parse_sums(text, name):
+    """The SHA256 of `name` in a SHA256SUMS file (sha256sum format), or None."""
+    for line in (text or '').splitlines():
+        m = re.match(r'^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$', line)
+        if m and os.path.basename(m.group(2)) == name:
+            return m.group(1).lower()
+    return None
+
+
+def check_github(current, url, timeout=10):
+    res = {'status': 'invalid', 'message': '', 'manifest': None, 'url': url, 'current': current, 'source': 'github'}
     if not url_allowed(url):
         res.update(status='insecure', message='The update address must use HTTPS.')
+        return res
+    try:
+        rel, cached = fetch_release(url, timeout)
+        res['cached'] = cached
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 429) and (e.headers.get('X-RateLimit-Remaining') == '0' or e.code == 429 or e.headers.get('Retry-After')):
+            res.update(status='offline', message=_rate_limit_message(e.headers), ratelimited=True)
+        elif e.code in (404, 410):
+            res.update(status='notfound', message='No update information has been published yet. Please try again later.')
+        else:
+            res.update(status='offline', message='The update server answered with an error (HTTP %d). Please try again later.' % e.code)
+        return res
+    except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
+        res.update(status='offline', message="Couldn't reach the update server. Check your internet connection and try again.")
+        res['detail'] = str(e)
+        return res
+    except ValueError as e:
+        res.update(status='invalid', message='The update information on the server is not valid (%s).' % e)
+        return res
+    try:
+        m = release_entry(rel)
+    except UpdateError as e:
+        res.update(status='invalid', message='The update information on the server is not valid (%s).' % e)
+        return res
+    if m is None:   # a draft or prerelease: never offered
+        res.update(status='current', message="You're up to date.")
+        return res
+    if not is_newer(m['version'], current):
+        res['manifest'] = m
+        res.update(status='current', message="You're up to date.")
+        return res
+    if not m['url']:
+        res.update(status='notfound', message='Version %s has no download for this %s yet. Please try again later.'
+                   % (m['version'], 'Mac' if IS_MAC else 'computer'))
+        return res
+    if not m['sums_url'] or not url_allowed(m['sums_url']) or not url_allowed(m['url']):
+        res.update(status='invalid', message="Version %s can't be verified (no SHA256SUMS in the release), so it won't be "
+                   "installed." % m['version'])
+        return res
+    try:
+        sums = _get(m['sums_url'], timeout).decode('utf-8', 'replace')
+    except urllib.error.HTTPError as e:
+        res.update(status='invalid', message="Version %s can't be verified (SHA256SUMS: HTTP %d)." % (m['version'], e.code))
+        return res
+    except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
+        res.update(status='offline', message="Couldn't reach the update server. Check your internet connection and try again.")
+        res['detail'] = str(e)
+        return res
+    h = parse_sums(sums, m['name'])
+    if not h:
+        res.update(status='invalid', message="Version %s can't be verified (%s is not in SHA256SUMS), so it won't be "
+                   "installed." % (m['version'], m['name']))
+        return res
+    m['sha256'] = h
+    try:
+        m = validate(m)
+    except UpdateError as e:
+        res.update(status='invalid', message='The update information on the server is not valid (%s).' % e)
+        return res
+    res['manifest'] = m
+    res.update(status='available', message='Version %s is available.' % m['version'])
+    return res
+
+
+def check_manifest(current, url=None, timeout=10):
+    """The optional update.json fallback. -> same dict as check(). Never raises."""
+    url = url or DEFAULT_URL
+    res = {'status': 'invalid', 'message': '', 'manifest': None, 'url': url, 'current': current, 'source': 'manifest'}
+    if not url or not url_allowed(url):
+        res.update(status='insecure' if url else 'notfound',
+                   message='The update address must use HTTPS.' if url else 'No update address is configured.')
         return res
     try:
         data = _get(url, timeout)
@@ -371,9 +568,11 @@ def _q(p):
 
 
 def cleanup(keep=None):
-    """Remove old downloaded installers (keeps `keep`)."""
+    """Remove old downloaded installers (keeps `keep`, the release cache and the swap log)."""
     d = updates_dir()
     for f in os.listdir(d):
+        if not f.lower().endswith(('.exe', '.dmg', '.part')):
+            continue
         p = os.path.join(d, f)
         if keep and os.path.abspath(p) == os.path.abspath(keep):
             continue

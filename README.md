@@ -254,32 +254,36 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 
 ### Updates
 
-The **Update** button next to About (macOS: *Lyricist Sync Desktop ▸ Check for Updates…*) checks
-`https://www.ax-easy.com/lyricist-sync/update.json`.
-- The quiet check on start runs at most once a day, and can be switched off in the update window.
-- The badge dot means a new version is out.
-- **Update now** downloads the installer to `%LOCALAPPDATA%\Ax-Easy\LyricistSync\updates`. The download
-  resumes if interrupted.
-- The installer's SHA256 is checked before it runs, and the app refuses a mismatch or any non-HTTPS URL.
-- The installer runs silently, then the app starts again. The settings, the engine and the models stay where
-  they are.
-- No GitHub API and no tokens are involved.
+The **Update** button next to About (macOS: *Lyricist Sync Desktop ▸ Check for Updates…*) asks GitHub for the
+latest release of this repository:
+`https://api.github.com/repos/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest`.
+- No account and no token. Each check sends a User-Agent and the ETag of the last answer, so an unchanged release costs
+  nothing against GitHub's limit for anonymous requests (60 an hour per network). If that limit is reached, or the
+  computer is offline, the window says so and the next check tries again.
+- Drafts and prereleases are never offered. The version comes from the release tag (`v1.3.1`) and the release notes
+  from the release text.
+- The download is the release file for this computer: `AxEasy-LyricistSync-Desktop-Setup-<version>.exe` on Windows,
+  `…-mac-universal.dmg` on a Mac. Its SHA256 comes from the `SHA256SUMS` file of the same release. A release without
+  `SHA256SUMS`, or a file whose hash doesn't match, is refused. On a Mac, the new app must also be signed by the
+  Ax-Easy Developer ID (Team ID 7BMSHL4YZ6) and accepted by Gatekeeper.
+- The quiet check on start runs at most once a day, and can be switched off in the update window. The badge dot
+  means a new version is out. **Skip this version** hides that version's badge.
+- **Update now** downloads the file to `%LOCALAPPDATA%\Ax-Easy\LyricistSync\updates` (macOS:
+  `~/Library/Application Support/Ax-Easy/LyricistSync/updates`). The download resumes if interrupted.
+- Windows: the installer runs silently, then the app starts again. Mac: the app is replaced in place and restarts, or
+  the DMG opens for a drag to Applications when the app's folder isn't writable. The settings, the engine and the
+  models stay where they are.
 
-To publish an update, attach the Setup exe and the DMG to the GitHub release, then upload update.json to
-/lyricist-sync/ on ax-easy.com (its download URLs point at the GitHub release).
+**To publish an update:** create the GitHub release with the tag `vX.Y.Z`, attach the Setup exe, the DMG and a
+`SHA256SUMS` that lists both (the format of `sha256sum`), and publish it. Nothing else needs uploading.
 
-CI writes `update.json` next to the installer, with the real SHA256 and size (`tools/make_update_json.py`). Its
-fields are:
+Versions 1.0 to 1.3.0 checked `https://www.ax-easy.com/lyricist-sync/update.json`, which is not published, so they
+won't see 1.3.1 by themselves. Those users install 1.3.1 once from the release page; from then on, updates come from
+GitHub.
 
-```json
-{"version": "1.3.1", "date": "2026-10-09", "notes": "…",
- "url": "https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe",
- "sha256": "…", "size": 41396276, "minimum_os": "10.0.17763",
- "mac": {"url": "https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg",
-         "sha256": "…", "size": 0, "minimum_os": {"arm64": "11.0", "x86_64": "12.0"}}}
-```
-
-The top level is the Windows entry (what every Windows version reads); the macOS app reads `mac` on top of it.
+An optional static manifest (`update.json`, written by `tools/make_update_json.py`) can still serve as a fallback
+when GitHub can't be reached. It is off unless an address is set in `settings.json` (`"update_url"`) or in
+`LYRICIST_SYNC_UPDATE_URL`.
 
 ### Window style
 
@@ -396,20 +400,22 @@ pushes to this repository and manual runs, never to pull requests from forks.
    - the GUI, footer links and exporters;
    - save modes, overwrite prompts and per-song folders;
    - confidence markers and re-sync;
-   - the updater, against a local HTTP server;
+   - the updater, against mocked GitHub API answers and a local HTTP server;
    - the painted frame and native hit-tests;
    - QtMultimedia.
 4. Renders labelled screenshots of both window paths.
-5. Builds the Inno Setup installer and `update.json`.
+5. Builds the Inno Setup installer.
 6. Installs the build silently, self-tests the installed copy, and uninstalls it.
-7. Runs the updater end to end. A local server offers a fake newer version that points at the freshly built
-   installer. The test checks that:
-   - the popup finds it;
+7. Runs the updater end to end. A local mock of GitHub's releases API (`tools/make_mock_release.py`) offers a fake
+   v9.9.9 whose asset is the freshly built installer, with its `SHA256SUMS`. The macOS workflow does the same with
+   the DMG. The test checks that:
+   - the popup finds it and shows the release text;
+   - the hash comes from `SHA256SUMS`, and a second check is answered from the ETag cache;
    - the download and SHA256 check pass;
    - the silent install runs and keeps the user data;
    - a wrong hash is refused;
    - a 404 shows the friendly message.
-8. Uploads the installer with its `.sha256` and `update.json`.
+8. Uploads the installer with its `.sha256`.
 
 The `e2e` job then runs on a clean runner:
 1. Installs the artifact.
@@ -429,5 +435,5 @@ mac/                 macOS icon, entitlements, signing / notarization scripts, D
 LyricistSync-mac.spec  PyInstaller spec of the universal2 app
 tools/               manifest generators and the engine lock files (Windows, macOS arm64, macOS Intel)
 tests/               exporter parity, repeat detection, downloader, timing, demo + hard fixtures with known times
-CHANGELOG.md         release notes (also used for update.json)
+CHANGELOG.md         release notes (also the text of the GitHub release)
 ```

@@ -87,6 +87,9 @@ jobs:
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
 
+      - name: Unit tests (in-app updater against mocked GitHub API answers)
+        run: python tests/test_updater.py -v
+
       - name: PyInstaller (universal2)
         run: pyinstaller LyricistSync-mac.spec --noconfirm --clean
 
@@ -354,28 +357,21 @@ jobs:
         run: |
           mac/watchdog.sh 420 screens "$BIN" --screens screens-${{ matrix.arch }} --fixture tests/fixtures || echo "::warning::screens failed"
 
-      - name: In-app updater (local server offers 9.9.9 = this DMG; verify signature/Team ID/Gatekeeper, stage the swap)
+      - name: In-app updater (local mock of the GitHub releases API offers v9.9.9 = this DMG; SHA256SUMS, signature/Team ID/Gatekeeper, stage the swap)
         if: needs.build.outputs.signed == 'true'
-        continue-on-error: true
         run: |
           set -euo pipefail
           mkdir -p www && cp dmg/*.dmg www/
           D=$(ls www/*.dmg | head -1)
-          python - "$D" <<'PY'
-          import hashlib, json, os, sys
-          d = sys.argv[1]
-          h = hashlib.sha256(open(d, 'rb').read()).hexdigest()
-          base = 'http://127.0.0.1:8766/'
-          m = {'version': '9.9.9', 'date': '2026-10-09', 'notes': '- CI test release', 'url': base + 'none.exe',
-               'sha256': '0' * 64, 'size': 1, 'minimum_os': '10.0.17763',
-               'mac': {'url': base + os.path.basename(d), 'sha256': h, 'size': os.path.getsize(d),
-                       'minimum_os': {'arm64': '11.0', 'x86_64': '12.0'}}}
-          json.dump(m, open('www/update.json', 'w'), indent=1)
-          PY
+          python tools/make_mock_release.py www "$D" --version 9.9.9 --base http://127.0.0.1:8766/ > /dev/null
           python tools/serve_throttled.py www --port 8766 --rate 80 > srv.log 2>&1 &
-          sleep 2
-          LYRICIST_SYNC_UPDATE_TEST=1 "$BIN" --update-test http://127.0.0.1:8766/update.json --install --report update-test-${{ matrix.arch }}.json || { cat update-test-${{ matrix.arch }}.json; exit 1; }
-          cat update-test-${{ matrix.arch }}.json
+          API=http://127.0.0.1:8766/repos/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest
+          for i in $(seq 1 60); do curl -fsS -o /dev/null "$API" && break; sleep 1; done
+          curl -fsS "$API" -o latest.json; head -c 400 latest.json; echo
+          rc=0
+          LYRICIST_SYNC_UPDATE_TEST=1 "$BIN" --update-test "$API" --install --report update-test-${{ matrix.arch }}.json || rc=$?
+          cat update-test-${{ matrix.arch }}.json || true
+          if [ $rc -ne 0 ]; then echo "--- server log"; cat srv.log; exit $rc; fi
           for i in $(seq 1 120); do grep -q 'update swapped\|update swap failed' "$H/updates/swap.log" 2>/dev/null && break; sleep 1; done
           cat "$H/updates/swap.log"
           grep -q 'update swapped' "$H/updates/swap.log"

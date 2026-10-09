@@ -160,7 +160,12 @@ def run_update_test(url, install, report):
         return pred()
 
     app = App(qapp, screenshot=True)
-    app.settings['update_url'] = url
+    if updater.is_release_api(url):   # a (mock) GitHub "releases/latest" endpoint
+        app.settings['update_api'] = url
+        app.settings['update_url'] = ''
+    else:                             # the optional update.json fallback on its own
+        app.settings['update_api'] = 'http://127.0.0.1:9/repos/none/none/releases/latest'
+        app.settings['update_url'] = url
     app.update_no_install = True
     dlg = UpdateDialog(app.win, app)
     dlg.show()
@@ -168,7 +173,20 @@ def run_update_test(url, install, report):
     r = dlg.result or {}
     m = r.get('manifest') or {}
     check('popup detects the newer version', r.get('status') == 'available' and dlg.btn_now.isVisible() and
-          m.get('version', '') in dlg.head.text(), '%s → %s' % (VERSION, m.get('version')))
+          m.get('version', '') in dlg.head.text(), '%s → %s · %s %s %s' % (VERSION, m.get('version'), r.get('status'),
+                                                                            r.get('message'), r.get('detail', '')))
+    if updater.is_release_api(url):
+        check('release notes from the release body', bool(m.get('notes')) and dlg.notes.isVisible(), (m.get('notes') or '')[:60])
+        check('SHA256 taken from SHA256SUMS', len(m.get('sha256') or '') == 64, m.get('sha256'))
+        r5 = updater.check_for(VERSION, app.settings)
+        check('second check answered from the ETag cache (304)', r5.get('status') == 'available' and r5.get('cached'),
+              '%s cached=%s' % (r5.get('status'), r5.get('cached')))
+    if r.get('status') != 'available':   # nothing to download: report and stop here
+        rep['ok'] = False
+        if report:
+            with open(report, 'w', encoding='utf-8') as f:
+                json.dump(rep, f, ensure_ascii=False, indent=1)
+        return 1
     check('badge shown on the Update button', app.win.btn_update.badge())
     dlg.update_now()
     wait(lambda: dlg.installer is not None or (dlg.thread and not dlg.thread.is_alive() and dlg.info.text()), 600)
@@ -191,10 +209,11 @@ def run_update_test(url, install, report):
     check('plain HTTP refused', r2['status'] == 'insecure', r2['message'])
     os.environ['LYRICIST_SYNC_UPDATE_TEST'] = '1'
     # 404 + offline: friendly, no crash
-    r3 = updater.check(VERSION, url.rsplit('/', 1)[0] + '/not-published.json')
+    r3 = updater.check(VERSION, url.rsplit('/', 1)[0] + ('/not-published' if updater.is_release_api(url) else '/not-published.json'))
     d3 = UpdateDialog(app.win, app, r3)
     check('404 shows the friendly message', r3['status'] == 'notfound' and 'No update information' in d3.head.text(), r3['message'])
-    r4 = updater.check(VERSION, 'http://127.0.0.1:9/update.json', timeout=3)
+    r4 = updater.check(VERSION, 'http://127.0.0.1:9/repos/a/b/releases/latest' if updater.is_release_api(url)
+                       else 'http://127.0.0.1:9/update.json', timeout=3)
     check('offline shows the friendly message', r4['status'] == 'offline', r4['message'])
     if install and updater.IS_MAC:
         path = updater.download(m)

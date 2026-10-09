@@ -52,6 +52,14 @@
   replaced in place, or the DMG opens for a manual drag when that isn't possible.
 
 ### Other
+- **Updates come from GitHub Releases.** The app asks GitHub's API for the latest release of
+  Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop. It needs no account or token and uses an ETag cache, so unchanged checks don't
+  count against the hourly limit; a reached limit or no connection gets a clear message. Drafts and prereleases are
+  never offered. The release text is shown as the notes.
+  - The installer or DMG is checked against the release's `SHA256SUMS` and refused on a mismatch. Mac updates keep
+    the Developer ID Team ID and Gatekeeper checks.
+  - ax-easy.com is no longer used. An `update.json` fallback exists only if an address is configured.
+  - Versions up to 1.3.0 looked at ax-easy.com and need a one-time manual install of 1.3.1.
 - New name: **Ax-Easy Lyricist Sync Desktop** (window title, About, setup, installer, Start menu, Mac app and DMG). The GitHub repository is now Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop. Settings, the engine and the models stay where they were, so existing installs update in place and keep everything. The old Start-menu and desktop shortcuts are replaced.
 - Audio tags are read with tinytag (MIT) instead of mutagen (GPL); the builds exclude mutagen and the self-test checks it.
 - Tests and fixtures use made-up lyrics only.
