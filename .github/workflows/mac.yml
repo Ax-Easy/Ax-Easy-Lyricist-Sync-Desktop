@@ -8,6 +8,7 @@ on:
     # pushes only come from people with write access (never from forks), so they may sign
     branches: [main, 'mac-*', 'release/**']
     tags: ['v*']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
   workflow_dispatch:
     inputs:
