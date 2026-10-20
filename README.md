@@ -44,7 +44,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 | ![Main window after a sync (dark)](docs/screenshots/main-dark.webp) | ![Main window after a sync (light)](docs/screenshots/main-light.webp) |
 | ![Transcribe without lyrics](docs/screenshots/transcribe-dark.webp) | ![Transcribe without lyrics](docs/screenshots/transcribe-light.webp) |
 | ![Edit Line dialog](docs/screenshots/edit-line-dark.webp) | ![Edit Line dialog](docs/screenshots/edit-line-light.webp) |
-| ![Player with the waveform](docs/screenshots/player-dark.webp) | ![Player with the waveform](docs/screenshots/player-light.webp) |
+| ![Player with the waveform and the volume and balance knobs](docs/screenshots/player-dark.webp) | ![Player with the waveform and the volume and balance knobs](docs/screenshots/player-light.webp) |
 | ![♪ lines in instrumental parts](docs/screenshots/music-lines-dark.webp) | ![♪ lines in instrumental parts](docs/screenshots/music-lines-light.webp) |
 | ![Engine settings](docs/screenshots/engine-dark.webp) | ![Engine settings](docs/screenshots/engine-light.webp) |
 | ![Export confirmation](docs/screenshots/export-done-dark.webp) | ![Export confirmation](docs/screenshots/export-done-light.webp) |
