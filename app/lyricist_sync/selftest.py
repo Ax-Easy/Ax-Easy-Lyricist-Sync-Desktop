@@ -602,12 +602,47 @@ def run(report_path=None):
         assert win.review._active_row == 2, win.review._active_row
         win.wave.zoom(0.4, 1.0)
         assert 0 < win.wave.span < 2.0, win.wave.span
+        # 1.3.2: the decoded WAV plays through the stereo sink (volume + balance), when there is a sound device
+        from PySide6.QtMultimedia import QMediaDevices
+        has_dev = not QMediaDevices.defaultAudioOutput().isNull()
+        out['stereo_sink'] = win.player.native()
+        out['audio_device'] = has_dev
+        if has_dev:
+            assert win.player.native(), 'decoded WAV did not open in the stereo sink'
         win.toggle_play()
         pump(0.5)
         out['play_state'] = str(win.player.playbackState()).split('.')[-1]
+        if win.player.native() and out['play_state'] == 'PlayingState':
+            out['played_ms'] = win.player.position() - 1250
         win.player.stop()
         return out
     check('player', player)
+
+    def knobs():
+        win, app = ctx['app'].win, ctx['app']
+        assert win.vol_knob.isVisible() and win.pan_knob.isVisible()
+        bp = win.btn_pp.mapTo(win, win.btn_pp.rect().center())
+        kv = win.vol_knob.mapTo(win, win.vol_knob.rect().center())
+        assert abs(bp.y() - kv.y()) <= 3 and 0 < kv.x() - bp.x() < 200, ('knobs next to play/pause', bp, kv)
+        win.vol_knob.setValue(0.4, emit=True)
+        win.vol_knob.released.emit(0.4)
+        win.pan_knob.setValue(-0.3, emit=True)
+        win.pan_knob.released.emit(-0.3)
+        assert abs(win.player.volume() - 0.4) < 1e-9 and abs(win.player.pan() + 0.3) < 1e-9
+        with open(app.settings_path, encoding='utf-8') as f:
+            saved = json.load(f)
+        assert saved.get('volume') == 0.4 and saved.get('pan') == -0.3, saved
+        assert 'L 30' in win.pan_knob.toolTip(), win.pan_knob.toolTip()
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        ev = QMouseEvent(QEvent.MouseButtonDblClick, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton,
+                         Qt.NoModifier)
+        win.pan_knob.mouseDoubleClickEvent(ev)
+        assert win.pan_knob.value() == 0.0 and win.player.pan() == 0.0
+        win.vol_knob.setValue(1.0, emit=True)
+        win.vol_knob.released.emit(1.0)
+        return {'volume': win.player.volume(), 'pan': win.player.pan()}
+    check('knobs', knobs)
 
     def maximize():
         from . import winfx

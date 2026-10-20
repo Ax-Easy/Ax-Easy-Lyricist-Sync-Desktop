@@ -447,3 +447,185 @@ class GlassRowDelegate(QStyledItemDelegate):
                 p.drawLine(QPointF(x, y + 2.5), QPointF(x + wd, y + 2.5))
             x += wd + space
         p.restore()
+
+
+class Knob(QWidget):
+    """Round glass knob. Drag up/down (or left/right), wheel, arrow keys; double-click resets to the default.
+    kind 'volume': arc from the minimum; kind 'pan': arc from the top centre. valueChanged(float) while turning,
+    released(float) when a drag / wheel / key change ends (to save the setting)."""
+    valueChanged = Signal(float)
+    released = Signal(float)
+    SWEEP = 270.0
+
+    def __init__(self, kind='volume', minimum=0.0, maximum=1.0, default=1.0, label='', fmt=None, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import QTimer
+        self.kind, self.lo, self.hi, self.default = kind, minimum, maximum, default
+        self.label, self.fmt = label, fmt or (lambda v: '%d %%' % round(v * 100))
+        self._v = default
+        self._drag = None
+        self._hover = False
+        self.setFixedSize(34, 34)
+        self.setCursor(Qt.SizeVerCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAttribute(Qt.WA_Hover, True)
+        self._done = QTimer(self)
+        self._done.setSingleShot(True)
+        self._done.setInterval(400)
+        self._done.timeout.connect(lambda: self.released.emit(self._v))
+        self._tip()
+
+    def value(self):
+        return self._v
+
+    def setValue(self, v, emit=False):
+        v = max(self.lo, min(self.hi, float(v)))
+        if self.kind == 'pan' and abs(v) < 0.025:
+            v = 0.0  # a little detent at the centre
+        if v == self._v:
+            return
+        self._v = v
+        self._tip()
+        self.update()
+        if emit:
+            self.valueChanged.emit(v)
+
+    def text(self):
+        return '%s: %s' % (self.label, self.fmt(self._v)) if self.label else self.fmt(self._v)
+
+    def _tip(self):
+        self.setToolTip('%s\nDrag, scroll or use the arrow keys · double-click resets' % self.text())
+        self.setAccessibleName(self.text())
+
+    def _show_tip(self):
+        from PySide6.QtWidgets import QToolTip
+        QToolTip.showText(self.mapToGlobal(QPoint(self.width() // 2, self.height() + 4)), self.text(), self)
+
+    def _nudge(self, steps):
+        span = self.hi - self.lo
+        self.setValue(self._v + steps * span / 50.0, emit=True)
+        self._show_tip()
+        self._done.start()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = (e.position(), self._v)
+            self.setFocus()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            return
+        p0, v0 = self._drag
+        d = (p0.y() - e.position().y()) + (e.position().x() - p0.x())
+        self.setValue(v0 + d / 150.0 * (self.hi - self.lo), emit=True)
+        self._show_tip()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag is not None:
+            self._drag = None
+            self.released.emit(self._v)
+
+    def mouseDoubleClickEvent(self, e):
+        self._drag = None
+        self.setValue(self.default, emit=True)
+        self._show_tip()
+        self.released.emit(self._v)
+
+    def wheelEvent(self, e):
+        dy = e.angleDelta().y() or e.angleDelta().x()
+        if dy:
+            self._nudge(1 if dy > 0 else -1)
+        e.accept()
+
+    def keyPressEvent(self, e):
+        k = e.key()
+        if k in (Qt.Key_Up, Qt.Key_Right):
+            self._nudge(1)
+        elif k in (Qt.Key_Down, Qt.Key_Left):
+            self._nudge(-1)
+        elif k in (Qt.Key_PageUp, Qt.Key_PageDown):
+            self._nudge(5 if k == Qt.Key_PageUp else -5)
+        elif k in (Qt.Key_Home, Qt.Key_End, Qt.Key_0):
+            self.setValue(self.default if k != Qt.Key_End else self.hi, emit=True)
+            self._done.start()
+        else:
+            super().keyPressEvent(e)  # Space etc. still reach the window
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+        super().leaveEvent(e)
+
+    def _angle(self, v):
+        """Degrees clockwise from 12 o'clock."""
+        return -self.SWEEP / 2 + (v - self.lo) / (self.hi - self.lo) * self.SWEEP
+
+    def paintEvent(self, _e):
+        import math
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        dark = STATE['dark']
+        side = min(self.width(), self.height())
+        c = QPointF(self.width() / 2, self.height() / 2)
+        r_ring = side / 2 - 2.5
+        r_body = r_ring - 4
+        on = self.isEnabled()
+        # track
+        ring = QRectF(c.x() - r_ring, c.y() - r_ring, 2 * r_ring, 2 * r_ring)
+        pen = QPen(QColor(255, 255, 255, 38) if dark else QColor(20, 25, 40, 34), 3)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        start = 90 - self._angle(self.lo)  # Qt arcs: 0 = 3 o'clock, counter-clockwise, 1/16 degree
+        p.drawArc(ring, int(start * 16), int(-self.SWEEP * 16))
+        # value arc
+        a0 = self._angle(0.0 if self.kind == 'pan' else self.lo)
+        a1 = self._angle(self._v)
+        if abs(a1 - a0) > 0.5:
+            pen = QPen(QColor(ACCENT) if on else QColor(128, 128, 128), 3)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.drawArc(ring, int((90 - a0) * 16), int(-(a1 - a0) * 16))
+        # glass body
+        body = QRectF(c.x() - r_body, c.y() - r_body, 2 * r_body, 2 * r_body)
+        g = QLinearGradient(0, body.top(), 0, body.bottom())
+        if dark:
+            g.setColorAt(0, QColor(255, 255, 255, 52 + (14 if self._hover else 0)))
+            g.setColorAt(1, QColor(255, 255, 255, 16))
+            p.setPen(QPen(QColor(255, 255, 255, 60), 1))
+        else:
+            g.setColorAt(0, QColor(255, 255, 255, 250))
+            g.setColorAt(1, QColor(255, 255, 255, 170 + (40 if self._hover else 0)))
+            p.setPen(QPen(QColor(20, 25, 40, 46), 1))
+        p.setBrush(QBrush(g))
+        p.drawEllipse(body)
+        if self.hasFocus():
+            p.setPen(QPen(QColor(ACCENT_2), 1))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(body.adjusted(-1, -1, 1, 1))
+        # pointer
+        rad = math.radians(a1)
+        dx, dy = math.sin(rad), -math.cos(rad)
+        pen = QPen(QColor(ACCENT) if on else QColor(128, 128, 128), 2.2)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.drawLine(QPointF(c.x() + dx * r_body * 0.25, c.y() + dy * r_body * 0.25),
+                   QPointF(c.x() + dx * (r_body - 2.5), c.y() + dy * (r_body - 2.5)))
+        # tiny glyph in the middle: L|R for pan, a dot for volume
+        col = QColor('#F2F4F8') if dark else QColor('#4A5160')
+        col.setAlpha(150)
+        p.setPen(col)
+        f = QFont(self.font())
+        f.setPixelSize(7)
+        f.setWeight(QFont.DemiBold)
+        p.setFont(f)
+        if self.kind == 'pan':
+            p.drawText(QRectF(c.x() - r_ring, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, 'L')
+            p.drawText(QRectF(c.x() + r_ring - 9, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, 'R')
+        else:
+            p.drawText(QRectF(c.x() - r_ring, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, '−')
+            p.drawText(QRectF(c.x() + r_ring - 9, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, '+')

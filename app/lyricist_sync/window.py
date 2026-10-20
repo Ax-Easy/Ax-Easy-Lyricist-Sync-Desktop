@@ -5,7 +5,7 @@ import os
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor)
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QTableWidget, QC
                                QAbstractSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
 import importlib
+from .audio import StereoPlayer, pan_text
 from . import chrome, edits, instrumental, macfx, paths, theme as thememod, winfx
 from .player import INST, AudioCache, Waveform, fmt_clock
 from .chrome import MARGIN, RADIUS
@@ -22,9 +23,17 @@ from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
 from .theme import ACCENT, display_family
 LOW_CONF = 0.6
 LOW_WORD = 0.45   # Transcribe: a word Whisper gave less than this probability is shown in amber
-from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, PillButton, ReviewTable, STATE, AMBER, WORDS_ROLE
+from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, Knob, PillButton, ReviewTable, STATE, AMBER, WORDS_ROLE
 
 meta = importlib.import_module(__package__)
+
+
+def _num(v, default, lo, hi):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return default
+    return default if v != v else max(lo, min(hi, v))
 
 
 def _now():
@@ -169,9 +178,9 @@ class GlassWindow(QWidget, chrome.Frame):
         foot.addWidget(self.status_lbl)
         root.addLayout(foot)
 
-        self.player = QMediaPlayer(self)
-        self.audio_out = QAudioOutput(self)
-        self.player.setAudioOutput(self.audio_out)
+        self.player = StereoPlayer(self)   # stereo sink + volume / balance (see audio.py for why not QAudioOutput)
+        self.player.setVolume(self.vol_knob.value())
+        self.player.setPan(self.pan_knob.value())
         self.player.playbackStateChanged.connect(self._playback_changed)
         self.player.mediaStatusChanged.connect(self._media_status)
         self.player.positionChanged.connect(self._position_changed)
@@ -355,6 +364,18 @@ class GlassWindow(QWidget, chrome.Frame):
             for b, w in ((self.btn_back, 58), (self.btn_pp, 54), (self.btn_fwd, 58)):
                 b.setFixedWidth(w)
                 tr.addWidget(b)
+            st = self.app.settings
+            self.vol_knob = Knob('volume', 0.0, 1.0, 1.0, 'Volume')
+            self.vol_knob.setValue(_num(st.get('volume'), 1.0, 0.0, 1.0))
+            self.vol_knob.valueChanged.connect(lambda v: self.player.setVolume(v))
+            self.vol_knob.released.connect(lambda v: self._save_audio_setting('volume', v))
+            self.pan_knob = Knob('pan', -1.0, 1.0, 0.0, 'Balance', fmt=pan_text)
+            self.pan_knob.setValue(_num(st.get('pan'), 0.0, -1.0, 1.0))
+            self.pan_knob.valueChanged.connect(lambda v: self.player.setPan(v))
+            self.pan_knob.released.connect(lambda v: self._save_audio_setting('pan', v))
+            tr.addSpacing(2)
+            tr.addWidget(self.vol_knob)
+            tr.addWidget(self.pan_knob)
             self.time_lbl = QLabel('0:00.00 / 0:00.00')
             self.time_lbl.setObjectName('sub')
             self.time_lbl.setMinimumWidth(128)
@@ -1418,6 +1439,12 @@ class GlassWindow(QWidget, chrome.Frame):
             self.app.apply_instrumental()
 
     # ---------------------------------------------------------------- playback
+    def _save_audio_setting(self, key, v):
+        v = round(float(v), 3)
+        if self.app.settings.get(key) != v:
+            self.app.settings[key] = v
+            self.app.save_settings()
+
     def _load_audio(self, song):
         path = song.path if song else ''
         if self._src and not self._src_is(path):

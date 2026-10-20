@@ -15,10 +15,10 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 
 | | File | |
 |---|---|---|
-| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe) | per-user installer, about 41 MB |
-| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-1.3.1-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
-| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | |
-| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | |
+| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe) | per-user installer, about 41 MB |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.3.2-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-1.3.2-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
+| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | |
+| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | |
 
 Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases).
 
@@ -28,7 +28,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 - **Repeats found by ear**: a chorus written once but sung twice is detected and timed twice.
 - **Transcribe** songs without lyrics: Whisper writes the lines and their times; unsure words are marked amber.
 - **Confidence per line**, with the reason, so you only check the lines that need it.
-- **Review and edit**: a waveform with draggable line markers, a player with 0.5×–1.5× speed, nudge buttons,
+- **Review and edit**: a waveform with draggable line markers, a player with volume and balance knobs and 0.5×–1.5× speed, nudge buttons,
   in-place editing, split / merge / insert, *Re-sync from here*, *Re-align this line*, full undo / redo.
 - **♪ lines** for intros, solos and outros, so a lyric display never shows a stale line.
 - **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT.
@@ -79,8 +79,8 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 4. Press **Auto-sync** (or **Transcribe** when you have no lyrics). Check the amber lines, nudge or edit if needed.
 5. **Export** – TTML, LRC, SRT and VTT next to the audio or in a folder you choose.
 
-The full guide is in the manual ([English](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) ·
-[Ελληνικά](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.1/AxEasy-LyricistSync-Desktop-Manual-GR.pdf)) and below.
+The full guide is in the manual ([English](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) ·
+[Ελληνικά](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-GR.pdf)) and below.
 
 ## On macOS
 
@@ -153,8 +153,13 @@ On macOS read **⌘** for Ctrl, **⌫** for Delete, **⌃⌘F** for F11 and **Re
      - The **waveform** of the selected song shows a marker at every line start, violet **♪** regions, amber
        markers on lines to check, and the playhead. Click to seek, use the wheel to zoom (Shift+wheel scrolls),
        double-click to see the whole song, and drag a line marker to move that line.
-     - Transport: **▶ / ❚❚**, **−2 s / +2 s**, speed **0.5×–1.5×**, the time, and **▶ Play from line**. The line
-       playing now is highlighted and the list follows it.
+     - Transport: **▶ / ❚❚**, **−2 s / +2 s**, the **volume** and **balance** knobs, speed **0.5×–1.5×**, the
+       time, and **▶ Play from line**. The line playing now is highlighted and the list follows it.
+     - **Volume** (0–100 %) and **balance** (L–R, centre by default) are round knobs next to play/pause: drag up/down,
+       scroll, or use the arrow keys when the knob has focus; double-click resets (100 %, centre). The tooltip shows
+       the value, and both are remembered between sessions (1.3.2).
+     - Playback is true stereo through the system's own stereo output, so it is centred on any speaker setup,
+       including 5.1 / 7.1 sound cards. Speed changes keep the pitch.
      - The song is decoded once to PCM for exact seeking and cached (the last 8 songs) in
        `%LOCALAPPDATA%\Ax-Easy\LyricistSync\cache\audio` (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync/cache/audio`).
    - **Keyboard** (not while you type in a text box):
@@ -315,7 +320,7 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.3.1.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe`, about 50 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
 - macOS: the DMG (about 94 MB) holds the universal app; drag it to Applications.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`
