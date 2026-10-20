@@ -187,8 +187,8 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "dist/Lyricist Sync Desktop.app" "$RUNNER_TEMP/notary/app.zip"
           mac/notarize.sh "$RUNNER_TEMP/notary/app.zip" "$NOTARY_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" notary/app.json | tee notary/app.txt
           grep -E '^(id|status)=' notary/app.txt >> "$GITHUB_OUTPUT"
-          xcrun stapler staple "dist/Lyricist Sync Desktop.app"
-          xcrun stapler validate "dist/Lyricist Sync Desktop.app"
+          for i in 1 2 3 4 5; do xcrun stapler staple "dist/Lyricist Sync Desktop.app" && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
+          for i in 1 2 3 4 5; do xcrun stapler validate "dist/Lyricist Sync Desktop.app" && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
           spctl -a -vvv -t exec "dist/Lyricist Sync Desktop.app" 2>&1 | tee notary/spctl-app.txt
 
       - name: HTTPS works without python.org's certificate folder (as on a user's Mac)
@@ -248,7 +248,7 @@ jobs:
           set -euo pipefail
           mac/notarize.sh "dist-mac/$DMG_NAME" "$NOTARY_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" notary/dmg.json | tee notary/dmg.txt
           grep -E '^(id|status)=' notary/dmg.txt >> "$GITHUB_OUTPUT"
-          xcrun stapler staple "dist-mac/$DMG_NAME"
+          for i in 1 2 3 4 5; do xcrun stapler staple "dist-mac/$DMG_NAME" && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
 
       - name: Gatekeeper checks (spctl install, stapler, codesign --deep --strict)
         if: steps.mode.outputs.sign == 'true'
@@ -256,11 +256,11 @@ jobs:
           set -euo pipefail
           D="dist-mac/$DMG_NAME"
           { echo "== spctl -a -vvv -t install"; spctl -a -vvv -t install "$D" 2>&1
-            echo "== stapler validate"; xcrun stapler validate "$D" 2>&1
+            echo "== stapler validate"; for i in 1 2 3 4 5; do xcrun stapler validate "$D" 2>&1 && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
             M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
             echo "== codesign --verify --deep --strict (app in the DMG)"; codesign --verify --deep --strict -vv "$M/Lyricist Sync Desktop.app" 2>&1
             echo "== spctl -a -vvv -t exec (app in the DMG)"; spctl -a -vvv -t exec "$M/Lyricist Sync Desktop.app" 2>&1
-            echo "== stapler validate (app)"; xcrun stapler validate "$M/Lyricist Sync Desktop.app" 2>&1
+            echo "== stapler validate (app)"; for i in 1 2 3 4 5; do xcrun stapler validate "$M/Lyricist Sync Desktop.app" 2>&1 && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
             hdiutil detach "$M" -quiet; } | tee notary/gatekeeper.txt
           grep -q 'source=Notarized Developer ID' notary/gatekeeper.txt
 
@@ -331,7 +331,7 @@ jobs:
           xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;$(uuidgen)" "$D"
           if [ "${{ needs.build.outputs.signed }}" = true ]; then
             echo "== spctl -a -vvv -t install"; spctl -a -vvv -t install "$D"
-            echo "== stapler validate"; xcrun stapler validate "$D"
+            echo "== stapler validate"; for i in 1 2 3 4 5; do xcrun stapler validate "$D" && break; [ $i = 5 ] && exit 68; echo "stapler: Apple network error, retry $i"; sleep 20; done
           fi
           M=$(hdiutil attach -nobrowse -readonly "$D" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
           ls -la "$M"
