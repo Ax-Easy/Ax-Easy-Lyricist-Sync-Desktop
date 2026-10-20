@@ -26,6 +26,10 @@ def _wav(path, sec=2.0, sr=22050):
 
 
 def run(report_path=None):
+    import faulthandler
+    _hang = open(os.path.join(os.path.dirname(os.path.abspath(report_path)) if report_path else tempfile.gettempdir(),
+                              'selftest-hang.json'), 'w', encoding='utf-8')
+    faulthandler.dump_traceback_later(600, exit=True, file=_hang)  # a hang shows where (windowed exe: no console)
     checks = []
 
     def check(name, fn):
