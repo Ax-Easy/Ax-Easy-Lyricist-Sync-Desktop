@@ -87,8 +87,10 @@ jobs:
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
         run: pip wheel --no-deps --require-hashes -r tools/whisper-sdist.txt -w wheels
 
-      - name: Unit tests (in-app updater against mocked GitHub API answers)
-        run: python tests/test_updater.py -v
+      - name: Unit tests (in-app updater against mocked GitHub API answers; player audio)
+        run: |
+          python tests/test_updater.py -v
+          python tests/test_audio.py -v
 
       - name: PyInstaller (universal2)
         run: pyinstaller LyricistSync-mac.spec --noconfirm --clean

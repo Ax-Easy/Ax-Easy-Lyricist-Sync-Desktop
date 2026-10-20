@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.2 (2026-10-20)
+
+### Player: centred, true stereo
+- **Fixed: the player leaned to the right.** On Windows the built-in player (Qt's FFmpeg backend) opened the
+  sound card in its own mix format and, on a 5.1 / 7.1 setup, got the speaker layout wrong: the left channel went
+  to the front-right speaker and the right channel to the centre, so the front-left speaker stayed silent.
+  The player now plays the decoded song through a plain 16-bit **stereo** output, and Windows (or macOS) maps
+  stereo to your speakers like every other app. Left and right stay separate and equal; mono songs play in the
+  middle. Measured on a Sound Blaster AE-7 in 5.1: before, FL 0 / FR 100 % / C 100 %; now FL 100 % / FR 100 %.
+- Speed **0.5×–1.5×** keeps the pitch as before (time-stretch done in the app, so it works the same on Windows and
+  Mac).
+- Until a song's decoded copy is ready (a second or two after selecting it) the original file plays as before.
+
+### Volume and balance knobs
+- Two round glass knobs next to play/pause, in the light and dark themes: **Volume** 0–100 % (default 100 %) and
+  **Balance** L–R (default centre).
+- Drag up/down (or left/right), scroll, or use the arrow keys / Page Up / Page Down when a knob has focus.
+  **Double-click resets** (100 %, centre); the balance has a small detent at the centre.
+- The tooltip shows the value (*Volume: 80 %*, *Balance: L 30*, *Centre*).
+- Both are remembered between sessions.
+- Balance works on Windows and macOS: the app applies it to the samples itself (a balance law: centre is full
+  level on both sides, turning towards one side fades the other).
+
 ## 1.3.1 (2026-10-09)
 
 ### Edit lines in the review list
