@@ -648,6 +648,29 @@ def run(report_path=None):
         return {'volume': win.player.volume(), 'pan': win.player.pan()}
     check('knobs', knobs)
 
+    def player_bar_fit():
+        """1.3.2: every player control fits (no clipping, no overlap) at the minimum, default and a wide window size;
+        narrow windows use the compact two-row bar, wide ones the single row."""
+        win = ctx['app'].win
+        win.showNormal()
+        m = win.margin()
+        out = {}
+        for tag, (w, h) in (('min', (win.minimumWidth(), win.minimumHeight())), ('default', (1160 + 2 * m, 780 + 2 * m)),
+                            ('wide', (1700 + 2 * m, 900 + 2 * m))):
+            win.resize(w, h)
+            pump(0.3)
+            win._fit_player_bar()
+            pump(0.1)
+            assert win.transport.isVisible(), 'transport hidden'
+            bad = win.player_bar_clipped()
+            assert not bad, (tag, w, h, bad)
+            out[tag] = {'size': (win.width(), win.height()), 'compact': bool(win._compact)}
+        assert not out['wide']['compact'], out
+        win.resize(1160 + 2 * m, 780 + 2 * m)
+        pump(0.2)
+        return out
+    check('player_bar_fit', player_bar_fit)
+
     def maximize():
         from . import winfx
         win = ctx['app'].win
