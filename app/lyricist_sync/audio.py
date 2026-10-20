@@ -256,7 +256,8 @@ class StereoPlayer(QObject):
     # ---------------------------------------------------------------- volume / balance / speed
     def setVolume(self, v):
         self._volume = max(0.0, min(1.0, float(v)))
-        if self._use_qp:  # QAudioOutput.setVolume blocked forever on a CI runner with no sound device when idle
+        # QAudioOutput.setVolume blocks forever when there is no sound device (CI runners): nothing to hear then
+        if self._use_qp and not QMediaDevices.defaultAudioOutput().isNull():
             self._qo.setVolume(self._volume)
 
     def volume(self):
