@@ -373,26 +373,20 @@ class GlassWindow(QWidget, chrome.Frame):
             self.pan_knob.setValue(_num(st.get('pan'), 0.0, -1.0, 1.0))
             self.pan_knob.valueChanged.connect(lambda v: self.player.setPan(v))
             self.pan_knob.released.connect(lambda v: self._save_audio_setting('pan', v))
-            tr.addSpacing(2)
             tr.addWidget(self.vol_knob)
             tr.addWidget(self.pan_knob)
             self.time_lbl = QLabel('0:00.00 / 0:00.00')
             self.time_lbl.setObjectName('sub')
-            self.time_lbl.setMinimumWidth(128)
+            self.time_lbl.setMinimumWidth(max(128, self.time_lbl.fontMetrics().horizontalAdvance('00:00.00 / 00:00.00') + 14))
             self.time_lbl.setAlignment(Qt.AlignCenter)
-            tr.addWidget(self.time_lbl)
             self.speed = QComboBox()
             for r in (0.5, 0.75, 1.0, 1.25, 1.5):
                 self.speed.addItem('%g×' % r, r)
             self.speed.setCurrentIndex(2)
             self.speed.setToolTip('Playback speed')
             self.speed.currentIndexChanged.connect(lambda _i: self.player.setPlaybackRate(self.speed.currentData()))
-            tr.addWidget(self.speed)
-            tr.addWidget(self.btn_play)
-            tr.addStretch(1)
             self.low_lbl = QLabel('')
             self.low_lbl.setObjectName('hint')
-            tr.addWidget(self.low_lbl)
             self.btn_inst_add = PillButton('+ ♪')
             self.btn_inst_add.setFixedWidth(54)
             self.btn_inst_add.setToolTip('Add a ♪ line at the playhead (an instrumental part the automatic detection missed)')
@@ -403,18 +397,28 @@ class GlassWindow(QWidget, chrome.Frame):
             self.btn_inst_cfg.clicked.connect(self._inst_settings)
             lay.addWidget(self.transport)
             self.transport.hide()
+            self._tr_lay = tr
+            # compact layout (narrow window): a second player row between the transport and the nudge buttons
+            self.player_row2 = QWidget()
+            self._row2_lay = QHBoxLayout(self.player_row2)
+            self._row2_lay.setContentsMargins(0, 0, 0, 0)
+            self._row2_lay.setSpacing(6)
+            lay.addWidget(self.player_row2)
+            self.player_row2.hide()
+            self._compact = None
+            self._nudges = []
 
             tools = QHBoxLayout()
+            self._tools_lay = tools
             for txt, d in (('−0.1', -0.1), ('−0.01', -0.01), ('+0.01', 0.01), ('+0.1', 0.1)):
                 b = PillButton(txt)
                 b.setFixedWidth(54)
                 b.setToolTip('Move the selected line (← → keys: 0.1 s, with Shift: 0.01 s)')
                 b.clicked.connect(lambda _=False, d=d: self._nudge(d))
-                tools.addWidget(b)
+                self._nudges.append(b)
             self.btn_resync = PillButton('⟲  Re-sync from here')
             self.btn_resync.setToolTip('Keep this line where it is now (after you fixed it) and re-align only the lines after it')
             self.btn_resync.clicked.connect(lambda: self._resync_row(self.review.currentRow()))
-            tools.addWidget(self.btn_resync)
             self.btn_undo = PillButton('↶')
             self.btn_undo.setFixedWidth(40)
             self.btn_undo.setToolTip('Undo the last change in the line list (Ctrl+Z)')
@@ -423,12 +427,8 @@ class GlassWindow(QWidget, chrome.Frame):
             self.btn_redo.setFixedWidth(40)
             self.btn_redo.setToolTip('Redo (Ctrl+Y)')
             self.btn_redo.clicked.connect(self.redo)
-            tools.addWidget(self.btn_undo)
-            tools.addWidget(self.btn_redo)
-            tools.addStretch(1)
-            tools.addWidget(self.btn_inst_add)
-            tools.addWidget(self.btn_inst_cfg)
             lay.addLayout(tools)
+            self._fit_player_bar(force=False)
             self.review = ReviewTable()
             self.review.setMouseTracking(True)
             self.review_delegate = GlassRowDelegate(self.review)
@@ -556,7 +556,123 @@ class GlassWindow(QWidget, chrome.Frame):
             winfx.enable_native_frame(hwnd, dwm_frame=False)
         self.update()
 
+    # ---------------------------------------------------------------- responsive player bar
+    PLAY_FULL, PLAY_SHORT = '▶  Play from line', '▶  Line'
+    RESYNC_FULL, RESYNC_SHORT = '⟲  Re-sync from here', '⟲'
+
+    @staticmethod
+    def _clear_layout(lay):
+        while lay.count():
+            lay.takeAt(0)
+
+    def _bar_need(self, widgets, spacing=6):
+        return sum(w.sizeHint().width() for w in widgets) + spacing * (len(widgets) - 1)
+
+    def _fit_player_bar(self, force=False):
+        """Wide: one transport row + the nudge row (as in 1.3.1). Narrow: the transport (play/pause, knobs, time) on
+        top, then speed / Play from line / Re-sync / ♪ on a second row with short labels (full text in the tooltip),
+        then the nudges and undo/redo. Nothing is ever squeezed below its size hint (see player_bar_clipped)."""
+        if not hasattr(self, '_tr_lay'):
+            return
+        avail = self.transport.parentWidget().contentsRect().width() if self.transport.parentWidget() else 0
+        lay = self.transport.parentWidget().layout() if self.transport.parentWidget() else None
+        if lay is not None:
+            m = lay.contentsMargins()
+            avail -= m.left() + m.right()
+        play_w = self.btn_play.fontMetrics().horizontalAdvance(self.PLAY_FULL) + 32
+        res_w = self.btn_resync.fontMetrics().horizontalAdvance(self.RESYNC_FULL) + 32
+        base = [self.btn_back, self.btn_pp, self.btn_fwd, self.vol_knob, self.pan_knob]
+        row1 = self._bar_need(base) + 6 + self.time_lbl.minimumWidth() + 6 + self.speed.sizeHint().width() + 6 + play_w
+        row_t = self._bar_need(self._nudges + [self.btn_undo, self.btn_redo, self.btn_inst_add, self.btn_inst_cfg]) + 6 + res_w
+        compact = avail > 0 and max(row1, row_t) + 12 > avail
+        if compact == self._compact and not force:
+            return
+        self._compact = compact
+        tr, r2, tl = self._tr_lay, self._row2_lay, self._tools_lay
+        for l in (tr, r2, tl):
+            self._clear_layout(l)
+        for w in base:
+            tr.addWidget(w)
+        tr.addWidget(self.time_lbl)
+        self.btn_play.setText(self.PLAY_SHORT if compact else self.PLAY_FULL)
+        self.btn_resync.setText(self.RESYNC_SHORT if compact else self.RESYNC_FULL)
+        self.btn_play.setToolTip('Play from line: play from the selected line' if compact else 'Play from the selected line')
+        rt = 'Keep this line where it is now (after you fixed it) and re-align only the lines after it'
+        self.btn_resync.setToolTip(('Re-sync from here: ' + rt) if compact else rt)
+        self.btn_play.setMinimumWidth(self.btn_play.fontMetrics().horizontalAdvance(self.btn_play.text()) + 32)
+        self.btn_resync.setMinimumWidth(40 if compact else res_w)
+        if compact:
+            tr.addStretch(1)
+            for w in (self.speed, self.btn_play, self.btn_resync):
+                r2.addWidget(w)
+            r2.addStretch(1)
+            r2.addWidget(self.btn_inst_add)
+            r2.addWidget(self.btn_inst_cfg)
+            for w in self._nudges + [self.btn_undo, self.btn_redo]:
+                tl.addWidget(w)
+            tl.addStretch(1)
+            tl.addWidget(self.low_lbl)
+        else:
+            for w in (self.speed, self.btn_play):
+                tr.addWidget(w)
+            tr.addStretch(1)
+            tr.addWidget(self.low_lbl)
+            for w in self._nudges + [self.btn_resync, self.btn_undo, self.btn_redo]:
+                tl.addWidget(w)
+            tl.addStretch(1)
+            tl.addWidget(self.btn_inst_add)
+            tl.addWidget(self.btn_inst_cfg)
+        for w in (self.speed, self.btn_play):
+            w.setVisible(True)
+        self._sync_row2()
+
+    def _sync_row2(self):
+        if hasattr(self, 'player_row2'):
+            self.player_row2.setVisible(bool(self._compact))
+            on = not self._compact or not self.transport.isHidden()
+            self.speed.setVisible(on)
+            self.btn_play.setVisible(on)
+
+    def player_bar_clipped(self):
+        """Names of player-bar controls that are cut off, squeezed below their text or overlap a neighbour."""
+        ws = {'play_pause': self.btn_pp, 'back': self.btn_back, 'fwd': self.btn_fwd, 'volume': self.vol_knob,
+              'balance': self.pan_knob, 'time': self.time_lbl, 'speed': self.speed, 'play_from_line': self.btn_play,
+              'resync': self.btn_resync, 'undo': self.btn_undo, 'redo': self.btn_redo, 'inst_add': self.btn_inst_add,
+              'inst_cfg': self.btn_inst_cfg}
+        ws.update({'nudge%d' % i: b for i, b in enumerate(self._nudges)})
+        bad, rects = [], []
+        for n, w in ws.items():
+            if not w.isVisible():
+                continue
+            g = w.geometry()
+            par = w.parentWidget()
+            card = self.transport.parentWidget()
+            tl = w.mapTo(card, w.rect().topLeft())
+            if tl.x() < 0 or tl.x() + g.width() > card.width() or g.right() >= par.width() + 1:
+                bad.append(n)
+                continue
+            text = w.text() if hasattr(w, 'text') and callable(w.text) else (w.currentText() if hasattr(w, 'currentText') else '')
+            if n in ('volume', 'balance'):
+                need = w.minimumWidth()   # fixed-size knob (its text() is the tooltip value)
+            elif n == 'time':
+                need = w.fontMetrics().horizontalAdvance('00:00.00 / 00:00.00')
+            elif text:
+                need = w.fontMetrics().horizontalAdvance(text) + (34 if n == 'speed' else 12)
+            else:
+                need = w.minimumSizeHint().width()
+            if g.width() < need:
+                bad.append(n)
+                continue
+            rects.append((n, w.mapTo(card, w.rect().topLeft()), g.size()))
+        for i, (a, pa, sa) in enumerate(rects):
+            for b, pb, sb in rects[i + 1:]:
+                if pa.x() < pb.x() + sb.width() and pb.x() < pa.x() + sa.width() and \
+                        pa.y() < pb.y() + sb.height() and pb.y() < pa.y() + sa.height():
+                    bad.append('%s/%s' % (a, b))
+        return bad
+
     def resizeEvent(self, e):
+        QTimer.singleShot(0, self._fit_player_bar)
         # lyrics box: compact on short screens (1280×720), roomier on tall ones; the line list gets the rest
         self.lyrics.setMaximumHeight(max(84, min(200, int(self.height() * 0.13))))
         super().resizeEvent(e)
@@ -799,6 +915,7 @@ class GlassWindow(QWidget, chrome.Frame):
             self.wave.set_lines([])
         self._mark_unsure(song)
         self.transport.setVisible(bool(song and song.result))
+        self._sync_row2()
         self._load_audio(song)
         self._show_song_dir(song)
         self._loading = False

@@ -546,6 +546,36 @@ def _edit(app, win, dark, fixture_dir, label, out_dir, name):
     s.dirty = False
 
 
+def player_bar(app, win, dark, fixture_dir, label, out_dir, name):
+    """1.3.2 player bar at the minimum and the default window size (nothing may be cut off)."""
+    hard = os.path.join(fixture_dir, '..', 'hard')
+    audio, rp = os.path.join(hard, 'intro_long.mp3'), os.path.join(hard, 'intro_long.result.json')
+    if not (os.path.exists(audio) and os.path.exists(rp)):
+        return
+    app.add_songs([audio])
+    s = app.songs[-1]
+    _load_result(app, s, rp)
+    app.cur = len(app.songs) - 1
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(s)
+    _wait_audio(win)
+    win.set_busy(False, '', 1.0)
+    win.status_lbl.setText('')
+    win.btn_pp.setText('❚❚')
+    win.speed.setCurrentIndex(1)
+    m = win.margin()
+    for tag, (w, h) in (('min', (win.minimumWidth(), win.minimumHeight())), ('default', (1160 + 2 * m, 780 + 2 * m))):
+        win.resize(w, h)
+        _pump(0.3)
+        _show_at(win, 2, 36.2)
+        clipped = win.player_bar_clipped() if hasattr(win, 'player_bar_clipped') else '?'
+        _save(compose_labeled(win, dark, label + ' · player bar at the %s window size %dx%d · clipped: %s'
+                              % (tag, w, h, clipped or 'none')),
+              os.path.join(out_dir, '%s_21_player_bar_%s.png' % (name, tag)))
+    win.btn_pp.setText('▶')
+    win.speed.setCurrentIndex(2)
+
+
 def render(out_dir, fixture_dir=None):
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
@@ -591,6 +621,8 @@ def render(out_dir, fixture_dir=None):
                     _engine(app, win, dark, label, out_dir, name)
                 if 'edit' in only:
                     _edit(app, win, dark, fixture_dir, label, out_dir, name)
+                if 'playerbar' in only:
+                    player_bar(app, win, dark, fixture_dir, label, out_dir, name)
                 win.close()
                 continue
             app.add_songs(audios)
@@ -674,6 +706,7 @@ def render(out_dir, fixture_dir=None):
                 _transcribe(app, win, dark, fixture_dir, label, out_dir, name)
                 _engine(app, win, dark, label, out_dir, name)
                 _edit(app, win, dark, fixture_dir, label, out_dir, name)
+                player_bar(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     if not IS_MAC:
         chrome.force_win10(forced)
