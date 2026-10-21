@@ -678,7 +678,7 @@ class GlassWindow(QWidget, chrome.Frame):
 
     def _fit_lyrics_head(self):
         """The row above the lyrics box and the left column's top row shorten their labels in a narrow column."""
-        if not hasattr(self, 'btn_convert'):
+        if not hasattr(self, 'btn_convert') or not hasattr(self, 'right_col'):
             return
         self._fit_labels([(getattr(self, n), a, b) for n, a, b in self.HEAD_LABELS],
                          self.right_col.width() - 32, 100 + 3 * 10)
