@@ -2,6 +2,13 @@
 
 ## 1.4.0 (2026-10-21)
 
+### Import fix (before release)
+- SRT files with no blank line between cues (as exported by DistroKid's lyric sync tool / LyricPotato) were read
+  as one cue holding the whole file. A cue now starts at every `start --> end` line, so these files, files on one
+  single line, and VTT without blank lines import correctly. Also: CR-only, NEL and U+2028 / U+2029 line breaks,
+  BOM-less UTF-16 (Greek too), `.` as the millisecond separator. Pasted subtitle text is imported as timed lines,
+  and the lyrics clean-up never runs on timed-file text. Tests: `tests/test_import_variants.py`.
+
 ### Lyrics clean-up
 - Pasted lyrics (several lines) and imported files are tidied up automatically: section tags on their own line
   (`[Chorus]`, `[Verse 1]`, `[Intro]`, `(Chorus)`, `(x2)`, `[Ρεφρέν]` …) and inline `[..]` tags removed; a trailing

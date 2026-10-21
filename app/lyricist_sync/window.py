@@ -546,7 +546,10 @@ class GlassWindow(QWidget, chrome.Frame):
         t = self.theme
         body = self.body_rect()
         rad = self.radius()
-        cards = tuple((card.geometry().getRect(), card.radius) for card in self._cards if card.isVisible())
+        # card geometry in window coordinates: the columns sit inside the splitter since 1.4.0, so geometry() alone
+        # is relative to the splitter and drew the shadows (a thin seam in the gap) at the old offset
+        cards = tuple((QRect(card.mapTo(self, QPoint(0, 0)), card.size()).getRect(), card.radius)
+                      for card in self._cards if card.isVisible())
 
         def paint(q):
             if self.margin():
@@ -608,6 +611,7 @@ class GlassWindow(QWidget, chrome.Frame):
         if a + b > 0:
             self.split_ratio = a / float(a + b)
             self._split_save.start()
+        self.update()   # the card shadows in the cached background follow the columns
         self._fit_player_bar()
         self._fit_left()
 
@@ -639,6 +643,7 @@ class GlassWindow(QWidget, chrome.Frame):
         self.split.blockSignals(True)
         self.split.setSizes([left, tot - left])
         self.split.blockSignals(False)
+        self.update()
         self._fit_player_bar()
         self._fit_left()
 
@@ -2252,6 +2257,17 @@ class LyricsEdit(QPlainTextEdit):
         self.win = win
 
     def insertFromMimeData(self, src):
+        if src.hasText() and not src.hasUrls():
+            from . import importers
+            fmt = importers.sniff(src.text())
+            if fmt:   # pasted SRT / VTT / LRC / TTML text: import it as timed lines, never as plain lyrics
+                import tempfile
+                fd, tmp = tempfile.mkstemp(prefix='pasted-', suffix='.' + fmt)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(src.text().encode('utf-8'))
+                cur = self.win.app.current()
+                if self.win.app.import_timed(tmp, into=cur if cur and getattr(cur, 'has_audio', True) else None):
+                    return
         # several lines pasted = lyrics: cleaned up; one word / phrase pasted into a line stays as it is
         if src.hasText() and not src.hasUrls() and '\n' in src.text().strip() and self.win.auto_clean():
             self.insertPlainText(clean_lyrics(src.text()))

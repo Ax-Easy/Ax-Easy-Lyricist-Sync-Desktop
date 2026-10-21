@@ -53,6 +53,7 @@ jobs:
           python tests/test_updater.py -v
           python tests/test_import.py -v
           python tests/test_cleanup.py -v
+          python tests/test_import_variants.py -v
           python tests/test_audio.py -v
 
       - name: Build the openai-whisper wheel (sdist only on PyPI; hash-pinned)
