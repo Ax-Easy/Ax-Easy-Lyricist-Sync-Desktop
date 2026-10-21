@@ -681,7 +681,7 @@ def run(report_path=None):
         def text_ok(b):
             return b.width() >= b.fontMetrics().horizontalAdvance(b.text()) + 12
         left_btns = [win.btn_add, win.btn_remove, win.btn_setdir, win.btn_sync, win.btn_all, win.btn_tr, win.btn_tr_all,
-                     win.btn_import, win.btn_convert, win.btn_export]
+                     win.btn_clean, win.btn_import, win.btn_convert, win.btn_export]
         for tag, (w, h) in (('min', (win.minimumWidth(), win.minimumHeight())), ('wide', (1700 + 2 * m, 900 + 2 * m))):
             win.resize(w, h)
             pump(0.3)
@@ -692,6 +692,8 @@ def run(report_path=None):
             for side, sizes in (('left_min', [0, a + b]), ('right_min', [a + b, 0])):
                 win.split.setSizes(sizes)
                 win._split_moved()
+                pump(0.1)
+                win._fit_player_bar()
                 pump(0.1)
                 win._fit_player_bar()
                 pump(0.1)
