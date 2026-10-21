@@ -25,6 +25,25 @@ from .formats import DEFAULT_LAST_CUE
 EXTS = ('.srt', '.vtt', '.lrc', '.ttml', '.xml', '.dfxp')
 
 
+def _utf16_guess(data):
+    """BOM-less UTF-16: in Latin text every other byte is NUL, in Greek it is 0x03 (0x04 Cyrillic). Score the high
+    byte of each 2-byte unit for LE and BE."""
+    head = data[:2000]
+    if len(head) < 4 or len(head) % 2 and len(data) == len(head):
+        return None
+    hi = (0x00, 0x03, 0x04, 0x20)
+    le = sum(1 for b in head[1::2] if b in hi)
+    be = sum(1 for b in head[0::2] if b in hi)
+    n = len(head) // 2
+    if head.count(b'\x00') == 0:
+        return None
+    if le >= 0.9 * n and le > be:
+        return 'utf-16-le'
+    if be >= 0.9 * n and be > le:
+        return 'utf-16-be'
+    return None
+
+
 def decode(data):
     """Bytes -> (text, encoding): BOM (UTF-8 / UTF-16 LE / BE), BOM-less UTF-16 (NUL bytes), UTF-8, else Windows-1253."""
     if data[:3] == b'\xef\xbb\xbf':
@@ -33,15 +52,19 @@ def decode(data):
         return data[2:].decode('utf-16-le', 'replace'), 'utf-16le'
     if data[:2] == b'\xfe\xff':
         return data[2:].decode('utf-16-be', 'replace'), 'utf-16be'
-    head = data[:400]
-    if len(head) >= 4 and head.count(b'\x00') > len(head) // 4:
-        odd = sum(1 for b in head[1::2] if b == 0)
-        enc = 'utf-16-le' if odd >= len(head[1::2]) // 2 else 'utf-16-be'
+    enc = _utf16_guess(data)
+    if enc:
         return data.decode(enc, 'replace'), enc
     try:
         return data.decode('utf-8'), 'utf-8'
     except UnicodeDecodeError:
         return data.decode('cp1253', 'replace'), 'windows-1253'
+
+
+def normalise(text):
+    """Every kind of line break -> '\\n': CRLF, CR alone, NEL (U+0085), LINE / PARAGRAPH SEPARATOR (U+2028 / U+2029),
+    vertical tab and form feed."""
+    return re.sub(r'\r\n?|[\x85\u2028\u2029\x0b\x0c]', '\n', text)
 
 
 _TAG = re.compile(r'<[^>]*>')
@@ -84,26 +107,46 @@ def finish(lines, duration=None):
 
 
 # ---------------------------------------------------------------- SRT / VTT
-_ARROW = re.compile(r'^\s*(\S+)\s*-->\s*(\S+)')
+_TS = r'(?:\d{1,2}:)?\d{1,2}:\d{2}(?:[.,:]\d{1,3})?'
+_CUE = re.compile(r'(%s)[ \t]*-->[ \t]*(%s)' % (_TS, _TS))
+_INDEX_TAIL = re.compile(r'(?:^|\n|[ \t])\d{1,6}[ \t]*\n?\s*$')   # the next cue's number before its time line
+
+
+def _ts(s):
+    """'00:01:02,345' / '01:02.345' / '00:01:02:345' (':' or '.' as the ms separator) -> seconds."""
+    s = s.strip()
+    m = re.fullmatch(r'(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,:](\d{1,3}))?', s)
+    if not m:
+        return _clock(s)
+    h, mi, se, fr = m.groups()
+    return int(h or 0) * 3600 + int(mi) * 60 + int(se) + (int(fr) / 10 ** len(fr) if fr else 0)
 
 
 def parse_cues(text, vtt=False):
+    """SRT / WebVTT cues. A cue starts at every 'start --> end' time line, so it works without blank lines between
+    cues and even when the whole file is on one line; the text runs to the next time line, minus that cue's number
+    (SRT) or identifier line (VTT). Several text lines of one cue are joined with a space."""
+    text = normalise(text).lstrip('\ufeff')
+    if vtt:   # drop the header and NOTE / STYLE / REGION blocks (up to the next blank line)
+        text = re.sub(r'(?ms)^(?:NOTE|STYLE|REGION)\b.*?(?=\n[ \t]*\n|\n[^\n]*-->|\Z)', '', text)
+    ms = list(_CUE.finditer(text))
     lines = []
-    blocks = re.split(r'\n\s*\n', text.replace('\r\n', '\n').replace('\r', '\n').strip('\n\ufeff'))
-    for b in blocks:
-        rows = [r for r in b.split('\n')]
-        if vtt and rows and (rows[0].startswith('WEBVTT') or rows[0].split(' ')[0] in ('NOTE', 'STYLE', 'REGION')):
-            continue
-        k = next((i for i, r in enumerate(rows) if '-->' in r), None)
-        if k is None:
-            continue
-        m = _ARROW.match(rows[k])
-        if not m:
-            continue
-        a, z = _clock(m.group(1)), _clock(m.group(2))   # VTT cue settings after the end time are ignored
+    for k, m in enumerate(ms):
+        a, z = _ts(m.group(1)), _ts(m.group(2))
         if a is None:
             continue
-        txt = clean_text(' '.join(r.strip() for r in rows[k + 1:] if r.strip()))
+        body_start = m.end()
+        nl = text.find('\n', body_start)
+        if vtt:   # cue settings after the end time are ignored
+            body_start = nl if nl != -1 else len(text)
+        body = text[body_start:ms[k + 1].start() if k + 1 < len(ms) else len(text)]
+        if k + 1 < len(ms):
+            if vtt:   # the next cue's identifier line follows a blank line
+                body = re.sub(r'\n[ \t]*\n[ \t]*[^\n]*\s*$', '\n', body) if body.strip() and \
+                    re.search(r'\S[^\n]*\n[ \t]*\n[ \t]*\S[^\n]*\s*$', body) else body
+            else:
+                body = _INDEX_TAIL.sub('', body)
+        txt = clean_text(' '.join(r.strip() for r in body.split('\n') if r.strip()))
         lines.append({'start': a, 'end': z, 'text': txt})
     return lines
 
@@ -278,6 +321,7 @@ def sniff(text):
 
 def parse_bytes(data, ext='', duration=None):
     text, enc = decode(data)
+    text = normalise(text).lstrip('\ufeff')
     ext = ext.lower().lstrip('.')
     fmt = {'srt': 'srt', 'vtt': 'vtt', 'lrc': 'lrc', 'ttml': 'ttml', 'xml': 'ttml', 'dfxp': 'ttml'}.get(ext) or sniff(text)
     sn = sniff(text)

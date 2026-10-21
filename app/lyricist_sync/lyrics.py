@@ -72,6 +72,9 @@ def clean_lyrics(text):
     """Pasted or imported lyrics -> cleaned text: section-tag lines ([Chorus], [Verse 1], (Chorus), {Intro}, ...)
     removed, every line through clean_line, runs of blank lines collapsed to one (the stanza break), no blank lines
     at the start or end."""
+    from .importers import sniff
+    if sniff(str(text or '')):   # a timed file (SRT / VTT / LRC / TTML) is imported, never cleaned as plain text
+        return text
     out = []
     for raw in str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n'):
         if _SECTION_LINE.match(raw):

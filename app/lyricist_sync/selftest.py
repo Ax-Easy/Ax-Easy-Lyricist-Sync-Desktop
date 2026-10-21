@@ -811,6 +811,19 @@ def run(report_path=None):
         win.set_auto_clean(was)
         with open(app.settings_path, encoding='utf-8') as f:
             assert json.load(f).get('clean_lyrics') is was
+        # pasted subtitle text (DistroKid-style SRT, no blank lines) is imported, not cleaned into one line
+        cur = app.current()
+        md2 = QMimeData()
+        md2.setText('1\n00:00:01,000 --> 00:00:02,000\nfirst made-up line,\n2\n00:00:02,500 --> 00:00:04,000\nsecond one\n')
+        old_confirm = win.confirm
+        win.confirm = lambda *a, **k: True
+        try:
+            win.lyrics.insertFromMimeData(md2)
+        finally:
+            win.confirm = old_confirm
+        if cur is not None and cur.result:
+            got = [l['text'] for l in cur.result['lines']]
+            assert got == ['First made-up line', 'Second one'], got
         win.show_song(app.current())
         return {'auto_clean': was}
     check('lyrics_cleanup', lyrics_cleanup)

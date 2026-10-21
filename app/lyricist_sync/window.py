@@ -2252,6 +2252,17 @@ class LyricsEdit(QPlainTextEdit):
         self.win = win
 
     def insertFromMimeData(self, src):
+        if src.hasText() and not src.hasUrls():
+            from . import importers
+            fmt = importers.sniff(src.text())
+            if fmt:   # pasted SRT / VTT / LRC / TTML text: import it as timed lines, never as plain lyrics
+                import tempfile
+                fd, tmp = tempfile.mkstemp(prefix='pasted-', suffix='.' + fmt)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(src.text().encode('utf-8'))
+                cur = self.win.app.current()
+                if self.win.app.import_timed(tmp, into=cur if cur and getattr(cur, 'has_audio', True) else None):
+                    return
         # several lines pasted = lyrics: cleaned up; one word / phrase pasted into a line stays as it is
         if src.hasText() and not src.hasUrls() and '\n' in src.text().strip() and self.win.auto_clean():
             self.insertPlainText(clean_lyrics(src.text()))
