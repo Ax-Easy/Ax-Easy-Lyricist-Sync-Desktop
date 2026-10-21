@@ -1184,20 +1184,24 @@ class KeepEditsDialog(GlassDialog):
     """Transcribe / Auto-sync would replace lines edited by hand: Keep my edits / Replace."""
 
     def __init__(self, parent, songs, action):
-        super().__init__(parent, 'Replace your edits?', 560, 270)
+        super().__init__(parent, 'Re-sync to audio?' if action == 'import' else 'Replace your edits?', 560, 270)
         self.choice = 'keep'
         names = ', '.join('“%s”' % s.label() for s in songs[:3]) + (' and %d more' % (len(songs) - 3) if len(songs) > 3 else '')
         what = ('Transcribe replaces the lines, words and times with what Whisper hears.' if action == 'transcribe' else
+                'Re-sync to audio keeps the imported text and lets the aligner time every line to the song. The '
+                'imported times are replaced.' if action == 'import' else
                 'Auto-sync re-aligns every line with the words in the lyrics box (your edited words are kept there), '
                 'but the times you set by hand are replaced.')
-        self.lay.addWidget(link_label('You edited the lines of %s in the review list.<br><br>%s<br><br>'
-                                      'Either way you can undo it with <b>Ctrl+Z</b>.' % (names.replace('<', '&lt;'), what), 'plain'))
+        intro = 'The times of %s come from an imported file.' if action == 'import' else \
+            'You edited the lines of %s in the review list.'
+        self.lay.addWidget(link_label((intro + '<br><br>%s<br><br>'
+                                      'Either way you can undo it with <b>Ctrl+Z</b>.') % (names.replace('<', '&lt;'), what), 'plain'))
         self.lay.addStretch(1)
         row = QHBoxLayout()
         row.addStretch(1)
-        self.btn_keep = PillButton('Keep my edits')
+        self.btn_keep = PillButton('Keep imported times' if action == 'import' else 'Keep my edits')
         self.btn_keep.clicked.connect(self.reject)
-        self.btn_replace = PillButton('Replace', 'primary')
+        self.btn_replace = PillButton('Re-sync' if action == 'import' else 'Replace', 'primary')
         self.btn_replace.clicked.connect(self._replace)
         for b in (self.btn_keep, self.btn_replace):
             b.setMinimumWidth(120)

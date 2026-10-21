@@ -2,7 +2,7 @@
 queue, lyrics, review list and footer."""
 import os
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor)
 from PySide6.QtMultimedia import QMediaPlayer
@@ -23,7 +23,7 @@ from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
 from .theme import ACCENT, display_family
 LOW_CONF = 0.6
 LOW_WORD = 0.45   # Transcribe: a word Whisper gave less than this probability is shown in amber
-from .widgets import GlassCard, GlassProgress, GlassRowDelegate, IconPillButton, Knob, PillButton, ReviewTable, STATE, AMBER, WORDS_ROLE
+from .widgets import GlassCard, GlassSplitter, GlassProgress, GlassRowDelegate, IconPillButton, Knob, PillButton, ReviewTable, STATE, AMBER, WORDS_ROLE
 
 meta = importlib.import_module(__package__)
 
@@ -154,11 +154,25 @@ class GlassWindow(QWidget, chrome.Frame):
             b.setVisible(self._mode != 'mac')   # macOS: the native traffic lights do this
         root.addLayout(bar)
 
-        body = QHBoxLayout()
-        body.setSpacing(10)
-        body.addWidget(self._left_card(), 2)
-        body.addWidget(self._right_card(), 3)
-        root.addLayout(body, 1)
+        # 1.4.0: the two columns share the width through a draggable divider (50 / 50 by default, remembered)
+        self.split = GlassSplitter(Qt.Horizontal)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(10)
+        self.left_col, self.right_col = self._left_card(), self._right_card()
+        self.left_col.setMinimumWidth(self.LEFT_MIN)
+        self.right_col.setMinimumWidth(self.RIGHT_MIN)
+        self.split.addWidget(self.left_col)
+        self.split.addWidget(self.right_col)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 1)
+        self.split_ratio = 0.5
+        self.split.splitterMoved.connect(self._split_moved)
+        self.split.reset.connect(self.reset_split)
+        self._split_save = QTimer(self)
+        self._split_save.setSingleShot(True)
+        self._split_save.setInterval(400)
+        self._split_save.timeout.connect(self._save_split)
+        root.addWidget(self.split, 1)
 
         foot = QHBoxLayout()
         foot.setContentsMargins(8, 0, 8, 2)
@@ -337,10 +351,28 @@ class GlassWindow(QWidget, chrome.Frame):
             frow.addWidget(self.btn_song_dir)
             frow.addWidget(self.btn_song_dir_reset)
             lay.addLayout(frow)
+            lrow = QHBoxLayout()
+            self.drop_hint = QLabel('Lyrics · or drop a .lrc .srt .vtt .ttml file here')
+            self.drop_hint.setObjectName('hint')
+            self.btn_import = PillButton('Open file…')
+            self.btn_import.setToolTip('Import timed lyrics or subtitles (.lrc, .srt, .vtt, .ttml): with the selected song, '
+                                       'or on their own to convert them')
+            self.btn_import.clicked.connect(self._import_dialog)
+            self.btn_convert = PillButton('Convert files…')
+            self.btn_convert.setToolTip('Convert several subtitle files to .lrc, each next to its file (asks before '
+                                        'overwriting)')
+            self.btn_convert.clicked.connect(self._convert_dialog)
+            lrow.addWidget(self.drop_hint, 1)
+            lrow.addWidget(self.btn_import)
+            lrow.addWidget(self.btn_convert)
+            lay.addLayout(lrow)
             self.lyrics = QPlainTextEdit()
             self.lyrics.setPlaceholderText('Paste the lyrics here, one line per sung line.\n'
                                            'Lines like [Chorus] or (x2) are ignored.\n'
-                                           'A .txt with the same name next to the audio loads automatically.')
+                                           'Or drop a timed .lrc, .srt, .vtt or .ttml file to import its lines and times.')
+            self._drop = _TimedDrop(self)
+            self.lyrics.installEventFilter(self._drop)
+            self.lyrics.viewport().installEventFilter(self._drop)
             self.lyrics.setMaximumHeight(150)
             self.lyrics.textChanged.connect(self._lyrics_edited)
             lay.addWidget(self.lyrics)
@@ -556,6 +588,52 @@ class GlassWindow(QWidget, chrome.Frame):
             winfx.enable_native_frame(hwnd, dwm_frame=False)
         self.update()
 
+    # ---------------------------------------------------------------- 1.4.0: column divider
+    LEFT_MIN, RIGHT_MIN = 400, 470   # px: below this a column's buttons would be cut off
+
+    def _split_moved(self, _pos=0, _i=0):
+        a, b = self.split.sizes()
+        if a + b > 0:
+            self.split_ratio = a / float(a + b)
+            self._split_save.start()
+        self._fit_player_bar()
+        self._fit_left()
+
+    def _fit_left(self):
+        """The waveform hint shortens in a narrow left column instead of being cut off."""
+        if not hasattr(self, 'wave_hint'):
+            return
+        full = 'click to seek · wheel to zoom · drag a marker to move a line'
+        fm = self.wave_hint.fontMetrics()
+        avail = self.left_col.width() - 32 - 90   # card margins, the 'Waveform' label
+        txt = full if fm.horizontalAdvance(full) <= avail else 'click · wheel: zoom · drag a marker'
+        if fm.horizontalAdvance(txt) > avail:
+            txt = 'click · wheel · drag'
+        self.wave_hint.setText(txt)
+        self.wave_hint.setToolTip(full)
+
+    def _save_split(self):
+        self.app.settings['split'] = round(self.split_ratio, 4)
+        self.app.save_settings()
+
+    def apply_split(self):
+        a, b = self.split.sizes()
+        tot = a + b
+        if tot <= 0:
+            return
+        left = int(round(tot * self.split_ratio))
+        left = max(self.LEFT_MIN, min(tot - self.RIGHT_MIN, left))
+        self.split.blockSignals(True)
+        self.split.setSizes([left, tot - left])
+        self.split.blockSignals(False)
+        self._fit_player_bar()
+        self._fit_left()
+
+    def reset_split(self):
+        self.split_ratio = 0.5
+        self.apply_split()
+        self._save_split()
+
     # ---------------------------------------------------------------- responsive player bar
     PLAY_FULL, PLAY_SHORT = '▶  Play from line', '▶  Line'
     RESYNC_FULL, RESYNC_SHORT = '⟲  Re-sync from here', '⟲'
@@ -566,7 +644,9 @@ class GlassWindow(QWidget, chrome.Frame):
             lay.takeAt(0)
 
     def _bar_need(self, widgets, spacing=6):
-        return sum(w.sizeHint().width() for w in widgets) + spacing * (len(widgets) - 1)
+        def width(w):   # fixed-width buttons / knobs: their fixed width (sizeHint ignores it)
+            return w.minimumWidth() if w.minimumWidth() == w.maximumWidth() else max(w.sizeHint().width(), w.minimumWidth())
+        return sum(width(w) for w in widgets) + spacing * (len(widgets) - 1)
 
     def _fit_player_bar(self, force=False):
         """Wide: one transport row + the nudge row (as in 1.3.1). Narrow: the transport (play/pause, knobs, time) on
@@ -672,7 +752,7 @@ class GlassWindow(QWidget, chrome.Frame):
         return bad
 
     def resizeEvent(self, e):
-        QTimer.singleShot(0, self._fit_player_bar)
+        QTimer.singleShot(0, self.apply_split if hasattr(self, 'split') else self._fit_player_bar)
         # lyrics box: compact on short screens (1280×720), roomier on tall ones; the line list gets the rest
         self.lyrics.setMaximumHeight(max(84, min(200, int(self.height() * 0.13))))
         super().resizeEvent(e)
@@ -914,7 +994,7 @@ class GlassWindow(QWidget, chrome.Frame):
         else:
             self.wave.set_lines([])
         self._mark_unsure(song)
-        self.transport.setVisible(bool(song and song.result))
+        self.transport.setVisible(bool(song and song.result and getattr(song, 'has_audio', True)))
         self._sync_row2()
         self._load_audio(song)
         self._show_song_dir(song)
@@ -1054,9 +1134,14 @@ class GlassWindow(QWidget, chrome.Frame):
         synced = bool(has and cur.result)
         for b in (self.btn_add, self.btn_remove, self.btn_sync, self.btn_all):
             b.setEnabled(not busy)
-        self.btn_sync.setEnabled(not busy and has)   # no lyrics: Auto-sync transcribes first
-        self.btn_sync.setText('Auto-sync' if not has or split_lines(cur.lyrics) else 'Transcribe + sync')
-        self.btn_tr.setEnabled(not busy and has)
+        audio = bool(has and getattr(cur, 'has_audio', True))
+        self.btn_sync.setEnabled(not busy and audio)   # no lyrics: Auto-sync transcribes first
+        imported = bool(has and cur.result and cur.result.get('source') == 'import')
+        self.btn_sync.setText('Re-sync to audio' if imported else
+                              'Auto-sync' if not has or split_lines(cur.lyrics) else 'Transcribe + sync')
+        self.btn_sync.setToolTip('Time the imported lines to the song with the aligner (the imported times are replaced)'
+                                 if imported else 'Align the lyrics to the song. With no lyrics yet, it transcribes the song first.')
+        self.btn_tr.setEnabled(not busy and audio)
         self.btn_tr_all.setEnabled(not busy and any(not split_lines(s.lyrics) for s in self.app.songs))
         self.btn_engine.setEnabled(not busy)
         self.btn_all.setEnabled(not busy and any(split_lines(s.lyrics) for s in self.app.songs))
@@ -1572,6 +1657,10 @@ class GlassWindow(QWidget, chrome.Frame):
             self.wave.clear('Select a song to see its waveform')
             self._update_time()
             return
+        if not getattr(song, 'has_audio', True):
+            self.wave.clear('No audio: drop the song (or Add songs) to play and fine-tune · Export works without it')
+            self._update_time()
+            return
         hit = self.audio.get(path)
         if hit and os.path.exists(hit[0]):
             self.wave.set_audio(hit[1], hit[2])
@@ -1602,7 +1691,7 @@ class GlassWindow(QWidget, chrome.Frame):
     def _ensure_source(self):
         """Prefer the decoded WAV (sample-accurate seeks); the original file until it's ready."""
         song = self.app.current()
-        if not song:
+        if not song or not getattr(song, 'has_audio', True):
             return False
         hit = self.audio.get(song.path)
         want = hit[0] if hit and os.path.exists(hit[0]) else song.path
@@ -1828,6 +1917,10 @@ class GlassWindow(QWidget, chrome.Frame):
             c.setChecked(f in s.get('formats', ['ttml', 'lrc', 'srt', 'vtt']))
         self.bom.setChecked(bool(s.get('bom', False)))
         self.auto_export.setChecked(bool(s.get('auto_export', False)))
+        try:
+            self.split_ratio = min(0.8, max(0.2, float(s.get('split', 0.5))))
+        except (TypeError, ValueError):
+            self.split_ratio = 0.5
         self._loading_settings = False
         self.save_mode.currentIndexChanged.connect(self._save_mode_changed)
         self.bom.toggled.connect(lambda v: self._set('bom', v))
@@ -1841,6 +1934,31 @@ class GlassWindow(QWidget, chrome.Frame):
     def _set(self, key, value):
         self.app.settings[key] = value
         self.app.save_settings()
+
+    TIMED_FILTER = 'Timed lyrics and subtitles (*.lrc *.srt *.vtt *.ttml *.xml *.dfxp);;All files (*)'
+
+    def _import_dialog(self):
+        f, _ = QFileDialog.getOpenFileName(self, 'Import timed lyrics', self.app.settings.get('last_dir', ''), self.TIMED_FILTER)
+        if f:
+            self.app.settings['last_dir'] = os.path.dirname(f)
+            self.app.save_settings()
+            cur = self.app.current()
+            self.app.import_timed(f, into=cur if cur and getattr(cur, 'has_audio', True) else None)
+
+    def _convert_dialog(self):
+        files, _ = QFileDialog.getOpenFileNames(self, 'Convert files to LRC', self.app.settings.get('last_dir', ''),
+                                                self.TIMED_FILTER)
+        if files:
+            self.app.settings['last_dir'] = os.path.dirname(files[0])
+            self.app.save_settings()
+            self.app.convert_files(files)
+
+    def drop_timed(self, paths):
+        """Timed files dropped on the lyrics box: the first goes into the selected song (with audio), others are
+        imported on their own."""
+        cur = self.app.current()
+        for i, p in enumerate(paths):
+            self.app.import_timed(p, into=cur if i == 0 and cur and getattr(cur, 'has_audio', True) else None)
 
     def _add_songs(self):
         files, _ = QFileDialog.getOpenFileNames(self, 'Add songs', self.app.settings.get('last_dir', ''),
@@ -1915,6 +2033,8 @@ class GlassWindow(QWidget, chrome.Frame):
 
         f = mb.addMenu('File')
         act(f, 'add', 'Add Songs…', self._add_songs, QKeySequence.Open)
+        act(f, 'import', 'Import Timed Lyrics…', self._import_dialog, 'Ctrl+I')
+        act(f, 'convert', 'Convert Files to LRC…', self._convert_dialog)
         act(f, 'export', 'Export Selected', lambda: self.app.export_selected(), QKeySequence.Save)
         f.addSeparator()
         act(f, 'sync', 'Auto-sync', lambda: self.app.sync_current(), 'Ctrl+R')
@@ -1971,3 +2091,42 @@ class GlassWindow(QWidget, chrome.Frame):
         self.audio.cancel()
         QApplication.instance().removeEventFilter(self)
         super().closeEvent(e)
+
+
+class _TimedDrop(QObject):
+    """Drag a .lrc / .srt / .vtt / .ttml over the lyrics box: accent outline; drop imports it (1.4.0)."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+
+    @staticmethod
+    def _paths(e):
+        from .importers import is_timed_file
+        md = e.mimeData()
+        if not md.hasUrls():
+            return []
+        return [u.toLocalFile() for u in md.urls() if u.isLocalFile() and is_timed_file(u.toLocalFile())]
+
+    def _mark(self, on):
+        self.win.lyrics.setProperty('dropTarget', bool(on))
+        self.win.lyrics.setStyleSheet('QPlainTextEdit { border: 2px dashed %s; }' % ACCENT if on else '')
+        self.win.drop_hint.setText('Drop to import the timed lines' if on else 'Lyrics · or drop a .lrc .srt .vtt .ttml file here')
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t in (QEvent.DragEnter, QEvent.DragMove):
+            if self._paths(e):
+                e.acceptProposedAction()
+                self._mark(True)
+                return True
+        elif t == QEvent.DragLeave:
+            self._mark(False)
+        elif t == QEvent.Drop:
+            ps = self._paths(e)
+            self._mark(False)
+            if ps:
+                e.acceptProposedAction()
+                self.win.drop_timed(ps)
+                return True
+        return False

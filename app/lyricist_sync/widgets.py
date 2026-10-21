@@ -629,3 +629,65 @@ class Knob(QWidget):
         else:
             p.drawText(QRectF(c.x() - r_ring, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, '−')
             p.drawText(QRectF(c.x() + r_ring - 9, c.y() + r_ring - 9, 9, 9), Qt.AlignCenter, '+')
+
+
+# ---------------------------------------------------------------- 1.4.0: resizable columns
+from PySide6.QtWidgets import QSplitter, QSplitterHandle  # noqa: E402
+
+
+class GlassSplitterHandle(QSplitterHandle):
+    """The divider between the two glass columns: a slim grip pill (brighter / accent on hover and while
+    dragging); double-click resets to 50 / 50 (GlassSplitter.reset)."""
+
+    def __init__(self, o, parent):
+        super().__init__(o, parent)
+        self._hover = False
+        self._down = False
+        self.setCursor(Qt.SplitHCursor if o == Qt.Horizontal else Qt.SplitVCursor)
+        self.setToolTip('Drag to resize the columns · double-click: 50 / 50')
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        self._down = True
+        self.update()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._down = False
+        self.update()
+        super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        self.splitter().reset.emit()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        gh = min(56.0, h * 0.18)
+        r = QRectF((w - 4) / 2.0, (h - gh) / 2.0, 4, gh)
+        if self._down or self._hover:
+            c = QColor(ACCENT)
+            c.setAlpha(230 if self._down else 170)
+        else:
+            c = QColor(255, 255, 255, 70) if STATE['dark'] else QColor(20, 25, 40, 55)
+        path = QPainterPath()
+        path.addRoundedRect(r, 2, 2)
+        p.fillPath(path, c)
+
+
+class GlassSplitter(QSplitter):
+    reset = Signal()
+
+    def createHandle(self):
+        return GlassSplitterHandle(self.orientation(), self)

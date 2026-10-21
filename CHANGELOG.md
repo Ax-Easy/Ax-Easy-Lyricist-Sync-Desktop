@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.4.0 (2026-10-21)
+
+### Import timed lyrics and subtitles
+- Drop a **.lrc, .srt, .vtt or .ttml** on the lyrics box (or **Open file…**, macOS File ▸ Import Timed Lyrics… ⌘I).
+  On the selected song it replaces the timed lines (asked first when there are unsaved lines; Ctrl+Z undoes it).
+  Elsewhere in the window it goes to the song with the same name next to it, or becomes an entry without audio.
+- Without audio: edit and **Export** to every format (save location, never-overwrite question and confirmation as
+  usual). With audio: play and fine-tune, or **Re-sync to audio** (the aligner times the imported text).
+- **Convert files…**: several files at once, each to `.lrc` next to it; an existing `.lrc` is never overwritten
+  without asking (Overwrite / Keep both / Skip, apply to all).
+- Parsing: UTF-8 / UTF-8 BOM / UTF-16 (BOM or not) / Windows-1253; SRT and VTT multi-line cues joined into one line
+  with a space; HTML, VTT and `{\an8}` tags stripped, entities decoded; VTT NOTE / STYLE / REGION blocks and cue
+  settings ignored; LRC `[mm:ss(.xx|.xxx|:xx)]`, several stamps per line, `[offset:]`, word stamps removed, an empty
+  stamp ends the line before it; TTML `<p>` / `<span>` with clock (`hh:mm:ss.fff`, `hh:mm:ss:ff`) and offset times
+  (`h m s ms f t`), `ttp:tickRate`, `ttp:frameRate` (+ multiplier, sub-frames), nested `div` begin times.
+  Missing end times: the next line's start (the last line +4 s). Imported end times are exported unchanged.
+
+### Resizable columns
+- A draggable glass divider between the two panels; **double-click resets to 50 / 50** (the new default, was 40 / 60);
+  the position is remembered. Minimum widths keep every button whole; the player bar's one / two-row layout follows
+  the right column's width, and the waveform hint shortens in a narrow left column.
+
+### Tests
+- `tests/test_import.py` (made-up lines): all four formats, encodings, tags, offsets, ticks and frames, round trips
+  of the app's own exports. Self-test: `split_columns`, `import_timed`.
+
 ## 1.3.2 (2026-10-20)
 
 ### Player: centred, true stereo

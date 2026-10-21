@@ -1,5 +1,5 @@
 # dmgbuild settings: dmgbuild -s mac/dmg_settings.py -D app="dist/Lyricist Sync Desktop.app" \
-#     -D background=build/dmg-background.tiff "Lyricist Sync Desktop" AxEasy-LyricistSync-Desktop-1.3.2-mac-universal.dmg
+#     -D background=build/dmg-background.tiff "Lyricist Sync Desktop" AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg
 import os.path
 
 application = defines['app']  # noqa: F821
