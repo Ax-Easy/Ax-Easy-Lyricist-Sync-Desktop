@@ -3,7 +3,7 @@
 ; the name before 1.3.1: its shortcuts are removed on update (same AppId, same folder, same data)
 #define OldAppName "Ax-Easy Lyricist Sync"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.2"
+  #define MyAppVersion "1.4.0"
 #endif
 #define MyAppPublisher "Ax-Easy"
 #define MyAppURL "https://www.ax-easy.com"

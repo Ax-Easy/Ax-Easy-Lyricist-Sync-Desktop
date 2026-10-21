@@ -671,6 +671,150 @@ def run(report_path=None):
         return out
     check('player_bar_fit', player_bar_fit)
 
+    def split_columns():
+        """1.4.0: the column divider: 50 / 50 by default, both extremes keep every control whole (the player bar
+        follows the right column), double-click resets, the ratio is saved."""
+        win, app = ctx['app'].win, ctx['app']
+        m = win.margin()
+        out = {}
+
+        def text_ok(b):
+            return b.width() >= b.fontMetrics().horizontalAdvance(b.text()) + 12
+        left_btns = [win.btn_add, win.btn_remove, win.btn_setdir, win.btn_sync, win.btn_all, win.btn_tr, win.btn_tr_all,
+                     win.btn_clean, win.btn_import, win.btn_convert, win.btn_export]
+        for tag, (w, h) in (('min', (win.minimumWidth(), win.minimumHeight())), ('wide', (1700 + 2 * m, 900 + 2 * m))):
+            win.resize(w, h)
+            pump(0.3)
+            win.reset_split()
+            pump(0.1)
+            a, b = win.split.sizes()
+            assert abs(a - b) <= 2, ('not 50/50', tag, a, b)
+            for side, sizes in (('left_min', [0, a + b]), ('right_min', [a + b, 0])):
+                win.split.setSizes(sizes)
+                win._split_moved()
+                pump(0.1)
+                win._fit_player_bar()
+                pump(0.1)
+                win._fit_player_bar()
+                pump(0.1)
+                la, lb = win.split.sizes()
+                assert la >= win.LEFT_MIN and lb >= win.RIGHT_MIN, (tag, side, la, lb)
+                bad = win.player_bar_clipped() + [b.text() for b in left_btns if b.isVisible() and not text_ok(b)]
+                hint = win.wave_hint
+                if hint.fontMetrics().horizontalAdvance(hint.text()) > hint.width() + 1:
+                    bad.append('waveform hint')
+                assert not bad, (tag, side, la, lb, bad)
+                out['%s_%s' % (tag, side)] = (la, lb, bool(win._compact))
+        handle = win.split.handle(1)
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        handle.mouseDoubleClickEvent(QMouseEvent(QEvent.MouseButtonDblClick, QPointF(2, 2), QPointF(2, 2), Qt.LeftButton,
+                                                 Qt.LeftButton, Qt.NoModifier))
+        pump(0.1)
+        a, b = win.split.sizes()
+        assert abs(a - b) <= 2 and win.split_ratio == 0.5, (a, b)
+        win.split.setSizes([int((a + b) * 0.6), (a + b) - int((a + b) * 0.6)])
+        win._split_moved()
+        win._save_split()
+        with open(app.settings_path, encoding='utf-8') as f:
+            saved = json.load(f).get('split')
+        assert saved and abs(saved - 0.6) < 0.01, saved
+        win.reset_split()
+        win.resize(1160 + 2 * m, 780 + 2 * m)
+        pump(0.2)
+        out['saved'] = saved
+        return out
+    check('split_columns', split_columns)
+
+    def import_timed():
+        """1.4.0: .srt / .vtt / .lrc / .ttml in place of the lyrics: a file on its own (no audio) converts through the
+        normal export; dropped on a song it gives timed lines to play and fine-tune; Convert files… writes .lrc next
+        to each file and never overwrites without asking."""
+        app, win = ctx['app'], ctx['app'].win
+        d = os.path.join(tmp, 'import')
+        os.makedirs(d, exist_ok=True)
+        srt = os.path.join(d, 'Χαρταετοί.srt')
+        with open(srt, 'wb') as f:
+            f.write(b'\xef\xbb\xbf' + ('1\n00:00:01,000 --> 00:00:02,500\n<i>Paper kites</i> above\nthe harbour\n\n'
+                                       '2\n00:00:03,000 --> 00:00:04,000\nΧαρταετοί στον ουρανό\n').encode('utf-8'))
+        vtt = os.path.join(d, 'demo.vtt')
+        with open(vtt, 'w', encoding='utf-8') as f:
+            f.write('WEBVTT\n\n00:01.000 --> 00:02.000 align:start\nMorning comes a little closer\n')
+        n0 = len(app.songs)
+        s = app.import_timed(srt)
+        assert s is not None and not s.has_audio and len(app.songs) == n0 + 1, s
+        assert [l['text'] for l in s.result['lines']] == ['Paper kites above the harbour', 'Χαρταετοί στον ουρανό']
+        assert not win.transport.isVisible() and not win.btn_sync.isEnabled()
+        real_ask, win.ask_conflict = win.ask_conflict, lambda *a: 'keep'
+        try:
+            fmts = dict((k, c.isChecked()) for k, c in win.fmt_checks.items())
+            for k, c in win.fmt_checks.items():
+                c.setChecked(k == 'lrc')
+            files = app.export_songs([s], show=False)
+            for k, c in win.fmt_checks.items():
+                c.setChecked(fmts[k])
+            assert len(files) == 1 and files[0].endswith('.lrc'), files
+            with open(files[0], encoding='utf-8') as f:
+                lrc = f.read()
+            assert '[00:01.00]Paper kites above the harbour' in lrc and '[00:03.00]Χαρταετοί στον ουρανό' in lrc, lrc
+            rep = app.convert_files([srt, vtt])
+            assert [e['status'] for e in rep] == ['ok', 'ok'], rep
+            rep2 = app.convert_files([vtt])     # demo.lrc exists now: asked -> keep both
+            assert rep2[0]['files'][0].endswith('demo (2).lrc'), rep2
+            win.ask_conflict = lambda *a: 'skip'
+            assert app.convert_files([vtt])[0]['status'] == 'skipped'
+        finally:
+            win.ask_conflict = real_ask
+        # dropped on a song with audio: timed lines to play and fine-tune, Re-sync to audio offered
+        audio_song = next((x for x in app.songs if x.has_audio), None)
+        out = {'no_audio_lines': len(s.result['lines']), 'lrc': os.path.basename(files[0])}
+        if audio_song is not None:
+            app.select(app.songs.index(audio_song))
+            keep = {k: getattr(audio_song, k) for k in ('result', 'lyrics', 'lyrics_src', 'status', 'edited', 'dirty', 'imported')}
+            real_confirm, win.confirm = win.confirm, lambda *a: True
+            try:
+                win.drop_timed([vtt])
+            finally:
+                win.confirm = real_confirm
+            assert audio_song.result.get('source') == 'import' and audio_song.lyrics == 'Morning comes a little closer'
+            assert win.btn_sync.text() == 'Re-sync to audio' and win.transport.isVisible()
+            out['resync_button'] = win.btn_sync.text()
+            for k, v in keep.items():
+                setattr(audio_song, k, v)
+            win.show_song(audio_song)
+        app.remove_song(app.songs.index(s))
+        return out
+    check('import_timed', import_timed)
+
+    def lyrics_cleanup():
+        """1.4.0: pasted lyrics are cleaned up (tags, trailing . / , , capitals, blank lines), Ctrl+Z restores the paste,
+        the setting turns it off, Clean up works on the box."""
+        app, win = ctx['app'], ctx['app'].win
+        from PySide6.QtCore import QMimeData
+        raw = '[Verse 1]\npaper kites above the harbour,\n\n\n(Chorus)\nκαλησπέρα φεγγάρι.\n'
+        win.lyrics.setFocus()
+        win.lyrics.setPlainText('')
+        md = QMimeData()
+        md.setText(raw)
+        win.lyrics.insertFromMimeData(md)
+        assert win.lyrics.toPlainText() == 'Paper kites above the harbour\n\nΚαλησπέρα φεγγάρι', repr(win.lyrics.toPlainText())
+        win.lyrics.undo()
+        assert win.lyrics.toPlainText() == '', repr(win.lyrics.toPlainText())
+        was = win.auto_clean()
+        win.set_auto_clean(False)
+        win.lyrics.insertFromMimeData(md)
+        assert win.lyrics.toPlainText() == raw, repr(win.lyrics.toPlainText())
+        win.clean_up_lyrics()
+        assert win.lyrics.toPlainText() == 'Paper kites above the harbour\n\nΚαλησπέρα φεγγάρι'
+        win.lyrics.undo()
+        assert win.lyrics.toPlainText() == raw
+        win.set_auto_clean(was)
+        with open(app.settings_path, encoding='utf-8') as f:
+            assert json.load(f).get('clean_lyrics') is was
+        win.show_song(app.current())
+        return {'auto_clean': was}
+    check('lyrics_cleanup', lyrics_cleanup)
+
     def maximize():
         from . import winfx
         win = ctx['app'].win

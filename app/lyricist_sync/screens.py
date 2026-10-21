@@ -576,6 +576,63 @@ def player_bar(app, win, dark, fixture_dir, label, out_dir, name):
     win.speed.setCurrentIndex(2)
 
 
+def import_scenes(app, win, dark, fixture_dir, label, out_dir, name):
+    """1.4.0: the lyrics box as a drop area, an imported .srt on a song, a file without audio, and the column divider."""
+    d = tempfile.mkdtemp(prefix='lsync-import-')
+    srt = os.path.join(d, 'Ax-Easy Demo – Glass Towers.srt')
+    with open(srt, 'w', encoding='utf-8') as f:
+        f.write('1\n00:00:03,990 --> 00:00:05,830\nGlass towers glowing in the rain\n\n'
+                '2\n00:00:07,010 --> 00:00:09,070\nWe trace the light\nalong the lane\n\n'
+                '3\n00:00:10,250 --> 00:00:13,100\n<i>Hold the line, hold the line tonight</i>\n\n'
+                '4\n00:00:14,280 --> 00:00:16,400\nEvery word will find its time\n\n'
+                '5\n00:00:17,600 --> 00:00:19,690\nΧαρταετοί στον ουρανό\n')
+    lrc = os.path.join(d, 'Paper Kites (no audio).lrc')
+    with open(lrc, 'w', encoding='utf-8') as f:
+        f.write('[ti:Paper Kites]\n[ar:The Example Band]\n[00:01.50]Paper kites above the harbour\n'
+                '[00:04.00][00:16.00]Every string will find the wind\n[00:08.25]Ο ήλιος ανατέλλει\n')
+    song = next((s for s in app.songs if s.has_audio and 'Glass' in s.label()), None) or \
+        next((s for s in app.songs if s.has_audio), None)
+    if song is None:
+        return
+    keep = {k: getattr(song, k) for k in ('result', 'lyrics', 'lyrics_src', 'status', 'edited', 'dirty', 'imported')}
+    app.select(app.songs.index(song))
+    song.result, song.lyrics, song.status = None, '', 'Needs lyrics'
+    app.cur = app.songs.index(song)
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(song)
+    _wait_audio(win)
+    win.set_busy(False, '', 1.0)
+    win.status_lbl.setText('')
+    win._drop._mark(True)
+    _save(compose_labeled(win, dark, label + ' · 1.4.0: drag a .lrc / .srt / .vtt / .ttml over the lyrics box'),
+          os.path.join(out_dir, '%s_22_drop_area.png' % name))
+    win._drop._mark(False)
+    real = win.confirm
+    win.confirm = lambda *a: True
+    app.import_timed(srt, into=song)
+    win.confirm = real
+    _pump(0.2)
+    _show_at(win, 1, 7.5)
+    _save(compose_labeled(win, dark, label + ' · 1.4.0: an imported .srt on the song: play, fine-tune, export, or Re-sync to audio'),
+          os.path.join(out_dir, '%s_23_imported.png' % name))
+    s2 = app.import_timed(lrc)
+    _pump(0.2)
+    _save(compose_labeled(win, dark, label + ' · 1.4.0: a .lrc on its own (no audio): convert through the normal Export'),
+          os.path.join(out_dir, '%s_24_imported_no_audio.png' % name))
+    app.select(app.songs.index(song))
+    win.split_ratio = 0.36
+    win.apply_split()
+    _pump(0.2)
+    _save(compose_labeled(win, dark, label + ' · 1.4.0: the column divider dragged left (double-click: 50 / 50)'),
+          os.path.join(out_dir, '%s_25_columns.png' % name))
+    win.reset_split()
+    if s2 in app.songs:
+        app.remove_song(app.songs.index(s2))
+    for k, v in keep.items():
+        setattr(song, k, v)
+    win.show_song(song)
+
+
 def render(out_dir, fixture_dir=None):
     os.environ['LYRICIST_SYNC_HOME'] = tempfile.mkdtemp(prefix='lsync-screens-')
     os.makedirs(out_dir, exist_ok=True)
@@ -623,6 +680,9 @@ def render(out_dir, fixture_dir=None):
                     _edit(app, win, dark, fixture_dir, label, out_dir, name)
                 if 'playerbar' in only:
                     player_bar(app, win, dark, fixture_dir, label, out_dir, name)
+                if 'import' in only:
+                    app.add_songs(audios)
+                    import_scenes(app, win, dark, fixture_dir, label, out_dir, name)
                 win.close()
                 continue
             app.add_songs(audios)
@@ -707,6 +767,7 @@ def render(out_dir, fixture_dir=None):
                 _engine(app, win, dark, label, out_dir, name)
                 _edit(app, win, dark, fixture_dir, label, out_dir, name)
                 player_bar(app, win, dark, fixture_dir, label, out_dir, name)
+                import_scenes(app, win, dark, fixture_dir, label, out_dir, name)
             win.close()
     if not IS_MAC:
         chrome.force_win10(forced)

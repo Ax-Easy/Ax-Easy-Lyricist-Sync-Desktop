@@ -10,7 +10,7 @@ import uuid
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from . import bootstrap, edits, instrumental, paths, theme as thememod, updater
+from . import bootstrap, edits, importers, instrumental, paths, theme as thememod, updater
 from .engine_client import EngineClient
 from .export import export_song, read_tags, target_dir
 from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
@@ -34,12 +34,14 @@ class _UpdSignal(QObject):
 
 
 class Song:
-    def __init__(self, path, out_dir=None):
+    def __init__(self, path, out_dir=None, audio=True):
         self.id = uuid.uuid4().hex[:8]
         self.path = path
+        self.has_audio = audio       # 1.4.0: False for a lyric / subtitle file imported without a song
+        self.imported = None         # path of the .srt / .vtt / .lrc / .ttml the timed lines came from
         self.out_dir = out_dir if out_dir and os.path.isdir(out_dir) else None
-        self.tags = read_tags(path)
-        text, src = sidecar_lyrics(path)
+        self.tags = read_tags(path) if audio else {}
+        text, src = sidecar_lyrics(path) if audio else ('', None)
         self.lyrics = text or ''
         self.lyrics_src = src
         self.lang = 'auto'
@@ -71,7 +73,7 @@ class App:
                          'save_mode': 'beside', 'song_dirs': {},
                          'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False,
                          'update_check': True, 'update_last': 0, 'update_skip': '',
-                         'whisper_model': 'auto', 'whisper_asked': ''}
+                         'whisper_model': 'auto', 'whisper_asked': '', 'clean_lyrics': True}
         self.settings.update(instrumental.DEFAULTS)
         self.update_state = None
         self._upd = _UpdSignal()
@@ -117,6 +119,8 @@ class App:
         return self.songs[self.cur] if 0 <= self.cur < len(self.songs) else None
 
     def add_songs(self, files):
+        timed = [p for p in files if os.path.isfile(p) and importers.is_timed_file(p)]
+        files = [p for p in files if p not in timed]
         for p in files:
             if os.path.isfile(p) and os.path.splitext(p)[1].lower() in AUDIO_EXT and not any(s.path == p for s in self.songs):
                 self.songs.append(Song(p, (self.settings.get('song_dirs') or {}).get(os.path.abspath(p))))
@@ -124,6 +128,127 @@ class App:
             self.cur = 0
         self.win.refresh_queue(self.songs, self.cur)
         self.win.show_song(self.current())
+        for p in timed:
+            self.import_timed(p)
+
+    # ---------------------------------------------------------------- 1.4.0: import / convert timed files
+    def _sibling_audio(self, path):
+        base = os.path.splitext(path)[0]
+        for ext in AUDIO_EXT:
+            for e in (ext, ext.upper()):
+                if os.path.isfile(base + e):
+                    return base + e
+        return None
+
+    def import_timed(self, path, into=None):
+        """Read a .srt / .vtt / .lrc / .ttml into timed lines. into: the song to put them on (the current one when
+        the file is dropped on the lyrics box); otherwise the song with the same name next to it (added if needed),
+        else a song without audio. Returns the song or None."""
+        name = os.path.basename(path)
+        try:
+            r = importers.parse_file(path)
+        except (OSError, ValueError) as e:
+            self.win.status_lbl.setText('Could not import %s: %s' % (name, getattr(e, 'strerror', None) or e))
+            return None
+        s = into
+        if s is None:
+            audio = self._sibling_audio(path)
+            if audio:
+                s = next((x for x in self.songs if x.path == audio), None)
+                if s is None and not self.busy:
+                    s = Song(audio, (self.settings.get('song_dirs') or {}).get(os.path.abspath(audio)))
+                    self.songs.append(s)
+            if s is None:
+                s = next((x for x in self.songs if x.path == path), None)
+            if s is None:
+                s = Song(path, None, audio=False)
+                self.songs.append(s)
+        if self.busy and s.status in ('Queued',) or (self.busy and self.queue and s in self.queue):
+            self.win.status_lbl.setText('Wait for the running sync to finish before importing into this song.')
+            return None
+        if s.result and (s.edited or s.dirty) and not self.screenshot and not self.win.confirm(
+                'Import timed lyrics', 'Replace the timed lines of “%s” with the %d lines of %s?\n'
+                'Ctrl+Z in the line list brings the current lines back.' % (s.label(), len(r['lines']), name)):
+            return None
+        if s.result:
+            edits.history(s).push(s, 'Import %s' % name)
+        fmt = r['format'].upper()
+        if self.settings.get('clean_lyrics', True):   # 1.4.0 clean-up: tags out, tidy punctuation and capitals
+            from .lyrics import clean_lyrics
+            r['lines'] = [dict(l, text=clean_lyrics(l['text']).replace('\n', ' ')) for l in r['lines']]
+            r['lines'] = [l for l in r['lines'] if l['text']]
+            if not r['lines']:
+                self.win.status_lbl.setText('Nothing left to import from %s after the clean-up.' % name)
+                return None
+        s.result = {'lines': [dict(l, conf=1.0, why=['imported from %s' % fmt]) for l in r['lines']],
+                    'source': 'import', 'import_format': r['format'], 'mode': 'import'}
+        s.lyrics = '\n'.join(l['text'] for l in r['lines'])
+        s.lyrics_src = 'import'
+        s.imported = path
+        if not s.has_audio:
+            m = r.get('meta') or {}
+            s.tags = {k: v for k, v in (('title', m.get('ti')), ('artist', m.get('ar')), ('album', m.get('al'))) if v}
+        s.status = 'Imported · %s' % fmt
+        s.dirty = True
+        s.edited = True      # Re-sync to audio asks before it replaces the imported times
+        self.cur = self.songs.index(s)
+        self.win.refresh_queue(self.songs, self.cur)
+        self.win.show_song(s)
+        self.win.status_lbl.setText('Imported %d timed lines from %s (%s, %s)%s.' % (
+            len(r['lines']), name, fmt, r['encoding'],
+            ' · play and fine-tune, or press Re-sync to audio' if s.has_audio else
+            ' · no audio: add the song to play it, or just Export (e.g. to LRC)'))
+        return s
+
+    def convert_files(self, files):
+        """'Convert files…': each subtitle file -> .lrc next to it. An existing .lrc is never overwritten without
+        asking (Overwrite / Keep both / Skip, with 'apply to all'). Shows the export confirmation."""
+        from .formats import build, encode_file
+
+        class _Named:
+            def __init__(self, label):
+                self._l = label
+
+            def label(self):
+                return self._l
+        report, state = [], {}
+        for p in files:
+            name = os.path.basename(p)
+            entry = {'song': None, 'label': name, 'dir': os.path.dirname(os.path.abspath(p)), 'files': [],
+                     'status': 'ok', 'reason': ''}
+            report.append(entry)
+            try:
+                r = importers.parse_file(p)
+            except (OSError, ValueError) as e:
+                entry['status'], entry['reason'] = 'failed', str(getattr(e, 'strerror', None) or e)
+                continue
+            out = os.path.splitext(p)[0] + '.lrc'
+            if os.path.exists(out):
+                d = self.win.ask_conflict(_Named(name), [out], state)
+                if d == 'skip':
+                    entry['status'], entry['reason'] = 'skipped', 'the .lrc already exists and you chose Skip'
+                    continue
+                if d == 'keep':
+                    n = 2
+                    while os.path.exists('%s (%d).lrc' % (os.path.splitext(p)[0], n)):
+                        n += 1
+                    out = '%s (%d).lrc' % (os.path.splitext(p)[0], n)
+            m = r.get('meta') or {}
+            text = build('lrc', [{'text': l['text'], 'time': l['start'], 'end': l['end']} for l in r['lines']],
+                         {'ti': m.get('ti', ''), 'ar': m.get('ar', ''), 'al': m.get('al', '')})
+            try:
+                with open(out, 'wb') as f:
+                    f.write(encode_file(text))
+            except OSError as e:
+                entry['status'], entry['reason'] = 'failed', e.strerror or str(e)
+                continue
+            entry['files'] = [out]
+        ok = sum(len(e['files']) for e in report)
+        self.win.status_lbl.setText('Converted %d of %d file%s to LRC.' % (ok, len(files), '' if len(files) == 1 else 's'))
+        self.last_convert = report
+        if report and not self.screenshot:
+            self.win.show_export_report(report)
+        return report
 
     def apply_instrumental(self, songs=None):
         """Re-place the ♪ lines of synced songs after the ♪ settings changed."""
@@ -188,7 +313,14 @@ class App:
         s = self.current()
         if not s:
             return
+        if not s.has_audio:
+            self.win.status_lbl.setText('This song has no audio: add the audio file to sync it.')
+            return
         job = 'sync' if split_lines(s.lyrics) else 'transcribe'   # no lyrics yet: transcribe first
+        if s.result and s.result.get('source') == 'import' and job == 'sync' and not self.screenshot:
+            if self.win.ask_keep_edits([s], 'import') != 'replace':
+                return
+            s.edited = False
         if self.keep_edits([s], job):
             self._start([s], job)
 
@@ -300,6 +432,7 @@ class App:
             self.open_engine(download=tier)
 
     def _start(self, songs, job='sync'):
+        songs = [s for s in songs if getattr(s, 'has_audio', True)]
         if job == 'sync':
             songs = [s for s in songs if split_lines(s.lyrics)]
         if not songs or self.busy or not self.ensure_engine():

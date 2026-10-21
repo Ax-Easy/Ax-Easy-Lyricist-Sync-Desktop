@@ -30,6 +30,12 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 - **Confidence per line**, with the reason, so you only check the lines that need it.
 - **Review and edit**: a waveform with draggable line markers, a player with volume and balance knobs and 0.5×–1.5× speed, nudge buttons,
   in-place editing, split / merge / insert, *Re-sync from here*, *Re-align this line*, full undo / redo.
+- **Import timed lyrics and subtitles** (.lrc, .srt, .vtt, .ttml): drop one on the lyrics box, with or without the
+  song, then fine-tune, *Re-sync to audio*, or just export it to LRC and the other formats. **Convert files…** turns
+  a batch of subtitle files into .lrc next to each one.
+- **Lyrics clean-up** on paste and import: `[Chorus]` / `(Verse 1)` tags, a trailing `.` or `,` and extra blank
+  lines removed, every line capitalised (Greek too); **Clean up** button, undo, on/off in the box's right-click menu.
+- **Resizable columns**: drag the divider between the two panels (double-click: 50 / 50; remembered).
 - **♪ lines** for intros, solos and outros, so a lyric display never shows a stale line.
 - **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT.
 - **Runs locally** on CUDA (NVIDIA), Metal (Apple Silicon) or the CPU; the Whisper size follows your hardware.
@@ -48,6 +54,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 | ![♪ lines in instrumental parts](docs/screenshots/music-lines-dark.webp) | ![♪ lines in instrumental parts](docs/screenshots/music-lines-light.webp) |
 | ![Engine settings](docs/screenshots/engine-dark.webp) | ![Engine settings](docs/screenshots/engine-light.webp) |
 | ![Export confirmation](docs/screenshots/export-done-dark.webp) | ![Export confirmation](docs/screenshots/export-done-light.webp) |
+| ![Drop a .lrc, .srt, .vtt or .ttml on the lyrics box](docs/screenshots/import-drop-dark.webp) | ![An imported .srt on the song](docs/screenshots/import-light.webp) |
 
 **macOS**
 
@@ -256,6 +263,30 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 - **LRC**: `[ti:]`, `[ar:]` and `[al:]` headers, then `[mm:ss.xx]` lines.
 - **SRT**: UTF-8, with an optional BOM.
 - **VTT**: `WEBVTT`, never with a BOM.
+
+### Importing timed lyrics and subtitles (1.4.0)
+
+- Drop a **.lrc, .srt, .vtt or .ttml** file on the lyrics box, or use **Open file…** (macOS: File ▸ Import Timed
+  Lyrics…, ⌘I). Dropped on the selected song, its lines and times replace the song's lines (asked first if you have
+  unsaved lines; Ctrl+Z undoes it). Dropped anywhere else in the window, it goes to the song with the same name next to
+  it, or becomes an entry **without audio**.
+- Without audio you can still edit the lines and **Export** to every format, with the usual save location, the
+  never-overwrite question and the confirmation. With audio, play and fine-tune as usual, or press **Re-sync to
+  audio** to time the imported text with the aligner.
+- **Convert files…** takes several files and writes a `.lrc` next to each one (Overwrite / Keep both / Skip if it
+  exists).
+- Parsing: UTF-8 (with or without BOM), UTF-16 (with or without BOM) and Windows-1253 Greek. An SRT / VTT cue with
+  several lines becomes **one line, joined with a space** (in subtitles a line break is only wrapping). HTML and VTT
+  tags are removed and cue settings ignored. LRC: `[mm:ss]`, `[mm:ss.xx]`, `[mm:ss.xxx]`, several stamps per line,
+  `[offset:]`, word stamps removed. TTML: `<p>` / `<span>` begin, end and dur in clock or offset form (`h m s ms f t`),
+  with `ttp:tickRate` / `ttp:frameRate`. Where a format has no end time, a line ends where the next one starts
+  (the last one 4 s later). Imported end times are exported as they are.
+
+### Resizable columns (1.4.0)
+
+Drag the divider between the left and right panels to give either more room. Double-click it for 50 / 50 (the
+default). The position is remembered. Each column keeps a minimum width so nothing is cut off, and the player bar
+switches between one and two rows with the right column's width.
 
 ### Updates
 
