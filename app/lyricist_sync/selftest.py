@@ -111,7 +111,7 @@ def run(report_path=None):
         return {'ttml_bytes': len(ttml.encode('utf-8'))}
     check('exporters', exporters)
 
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QPoint, QRect, Qt
     from PySide6.QtWidgets import QApplication
     qapp = QApplication.instance() or QApplication([sys.argv[0]])
     ctx = {}
@@ -725,6 +725,45 @@ def run(report_path=None):
         out['saved'] = saved
         return out
     check('split_columns', split_columns)
+
+    def split_gap_clean():
+        """1.4.0 fix: the gap between the columns shows only the splitter grip: no seam from card shadows drawn
+        at stale (splitter-relative) positions, in dark and light, at 50/50 and after the divider moved."""
+        win = ctx['app'].win
+        out = {}
+        for dark in (True, False):
+            if win.theme.dark != dark:
+                win._toggle_theme()
+                pump(0.2)
+            for tag, ratio in (('half', 0.5), ('moved', 0.38)):
+                win.split_ratio = ratio
+                win.apply_split()
+                pump(0.25)
+                img = win.grab().toImage()
+                dpr = img.devicePixelRatio() or 1
+                L, R = win.left_col, win.right_col
+                if os.environ.get('LSYNC_GAPSHOT'):
+                    img.save(os.path.join(os.environ['LSYNC_GAPSHOT'], 'gap_%s_%s.png' % ('dark' if dark else 'light', tag)))
+                x0 = L.mapTo(win, QPoint(L.width(), 0)).x() + 1
+                x1 = R.mapTo(win, QPoint(0, 0)).x() - 1
+                y0 = L.mapTo(win, QPoint(0, 0)).y() + 12
+                hy = L.mapTo(win, QPoint(0, L.height())).y() - 12
+                worst = 0
+                for y in list(range(y0, y0 + int((hy - y0) * 0.3), 7)) + list(range(hy - int((hy - y0) * 0.25), hy, 7)):
+                    row = [img.pixelColor(int(x * dpr), int(y * dpr)) for x in range(x0 + 2, x1 - 1)]
+                    lum = [c.red() * 0.3 + c.green() * 0.59 + c.blue() * 0.11 for c in row]
+                    if len(lum) > 1:
+                        worst = max(worst, max(abs(a - b) for a, b in zip(lum, lum[1:])))
+                out['%s_%s' % ('dark' if dark else 'light', tag)] = round(worst, 1)
+                assert worst < 12, ('seam in the column gap', dark, tag, worst, x0, x1)
+                # the cached background must use the columns' window positions (the stale-shadow bug)
+                key_cards = [c[0] for c in win._bg_cache[0][-1]] if getattr(win, '_bg_cache', None) else []
+                want = [QRect(c.mapTo(win, QPoint(0, 0)), c.size()).getRect() for c in win._cards if c.isVisible()]
+                assert key_cards == want, ('background cards out of place', key_cards, want)
+        win.reset_split()
+        pump(0.1)
+        return out
+    check('split_gap_clean', split_gap_clean)
 
     def import_timed():
         """1.4.0: .srt / .vtt / .lrc / .ttml in place of the lyrics: a file on its own (no audio) converts through the
