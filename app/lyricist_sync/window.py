@@ -671,7 +671,7 @@ class GlassWindow(QWidget, chrome.Frame):
             if w.text() != a:
                 w.setText(a)
         geo = row.geometry().width()
-        avail = geo if geo > 0 else avail
+        avail = min(geo, avail) if geo > 0 else avail
         need, n = 0, 0
         for k in range(row.count()):
             w = row.itemAt(k).widget()
@@ -679,9 +679,18 @@ class GlassWindow(QWidget, chrome.Frame):
                 continue
             need += 40 if isinstance(w, ElideLabel) else w.sizeHint().width()
             n += 1
-        need += max(0, n - 1) * max(row.spacing(), 6)
+        need += max(0, n - 1) * max(row.spacing(), 6) + 12
         if need <= avail:
+            QTimer.singleShot(0, lambda: self._check_row(items))
             return
+        self._shorten(items)
+
+    def _check_row(self, items):
+        """After the layout ran: if a full label still got squeezed (e.g. the macOS style's padding), shorten."""
+        if any(w.isVisible() and w.width() < w.fontMetrics().horizontalAdvance(w.text()) + 14 for w, a, b in items):
+            self._shorten(items)
+
+    def _shorten(self, items):
         for w, a, b in items:
             w.setText(b)
             if not (w.toolTip() or '').startswith(a):
