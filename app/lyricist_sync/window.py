@@ -658,12 +658,34 @@ class GlassWindow(QWidget, chrome.Frame):
             return w.minimumWidth() if w.minimumWidth() == w.maximumWidth() else max(w.sizeHint().width(), w.minimumWidth())
         return sum(width(w) for w in widgets) + spacing * (len(widgets) - 1)
 
+    HEAD_LABELS = (('btn_clean', 'Clean up', 'Clean'), ('btn_import', 'Open file…', 'Open…'),
+                   ('btn_convert', 'Convert files…', 'Convert…'))
+
+    def _fit_lyrics_head(self):
+        """The row above the lyrics box: full button labels when they fit, short ones in a narrow column (the hint
+        before them elides)."""
+        if not hasattr(self, 'btn_convert'):
+            return
+        row = self.btn_convert.parentWidget()
+        avail = row.contentsRect().width() if row else 0
+        def need(i):
+            return sum(getattr(self, n).fontMetrics().horizontalAdvance(t[i]) + 36 for n, *t in self.HEAD_LABELS) + 90
+        full = need(0) <= avail
+        for n, a, b in self.HEAD_LABELS:
+            w = getattr(self, n)
+            want = a if full else b
+            if w.text() != want:
+                w.setText(want)
+                if not full and a not in (w.toolTip() or ''):
+                    w.setToolTip(a + (' · ' + w.toolTip() if w.toolTip() else ''))
+
     def _fit_player_bar(self, force=False):
         """Wide: one transport row + the nudge row (as in 1.3.1). Narrow: the transport (play/pause, knobs, time) on
         top, then speed / Play from line / Re-sync / ♪ on a second row with short labels (full text in the tooltip),
         then the nudges and undo/redo. Nothing is ever squeezed below its size hint (see player_bar_clipped)."""
         if not hasattr(self, '_tr_lay'):
             return
+        self._fit_lyrics_head()
         avail = self.transport.parentWidget().contentsRect().width() if self.transport.parentWidget() else 0
         lay = self.transport.parentWidget().layout() if self.transport.parentWidget() else None
         if lay is not None:
