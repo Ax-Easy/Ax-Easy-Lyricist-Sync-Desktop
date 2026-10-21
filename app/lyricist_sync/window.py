@@ -613,6 +613,7 @@ class GlassWindow(QWidget, chrome.Frame):
         """The waveform hint shortens in a narrow left column instead of being cut off."""
         if not hasattr(self, 'wave_hint'):
             return
+        self._fit_lyrics_head()
         full = 'click to seek · wheel to zoom · drag a marker to move a line'
         fm = self.wave_hint.fontMetrics()
         avail = self.left_col.width() - 32 - 90   # card margins, the 'Waveform' label
@@ -661,23 +662,30 @@ class GlassWindow(QWidget, chrome.Frame):
     HEAD_LABELS = (('btn_clean', 'Clean up', 'Clean'), ('btn_import', 'Open file…', 'Open…'),
                    ('btn_convert', 'Convert files…', 'Convert…'))
 
-    def _fit_lyrics_head(self):
-        """The row above the lyrics box: full button labels when they fit, short ones in a narrow column (the hint
-        before them elides)."""
-        if not hasattr(self, 'btn_convert'):
-            return
-        row = self.btn_convert.parentWidget()
-        avail = row.contentsRect().width() if row else 0
-        def need(i):
-            return sum(getattr(self, n).fontMetrics().horizontalAdvance(t[i]) + 36 for n, *t in self.HEAD_LABELS) + 90
-        full = need(0) <= avail
-        for n, a, b in self.HEAD_LABELS:
-            w = getattr(self, n)
+    def _fit_labels(self, items, avail, extra):
+        """Full button labels when the row fits, short ones (full text in the tooltip) when it does not.
+        items: (button, full, short); extra: px of the other widgets, margins and spacing in that row."""
+        def width(w, t):
+            pad = w.sizeHint().width() - w.fontMetrics().horizontalAdvance(w.text())
+            return w.fontMetrics().horizontalAdvance(t) + max(pad, 24)
+        full = sum(width(w, a) for w, a, b in items) + extra <= avail
+        for w, a, b in items:
             want = a if full else b
             if w.text() != want:
                 w.setText(want)
-                if not full and a not in (w.toolTip() or ''):
-                    w.setToolTip(a + (' · ' + w.toolTip() if w.toolTip() else ''))
+            if not full and not (w.toolTip() or '').startswith(a):
+                w.setToolTip(a + (' · ' + w.toolTip() if w.toolTip() else ''))
+
+    def _fit_lyrics_head(self):
+        """The row above the lyrics box and the left column's top row shorten their labels in a narrow column."""
+        if not hasattr(self, 'btn_convert'):
+            return
+        self._fit_labels([(getattr(self, n), a, b) for n, a, b in self.HEAD_LABELS],
+                         self.right_col.width() - 32, 100 + 3 * 10)
+        if hasattr(self, 'btn_setdir'):
+            self._fit_labels([(self.btn_setdir, 'Set folder for selected…', 'Set folder…')],
+                             self.left_col.width() - 32,
+                             self.btn_add.sizeHint().width() + self.btn_remove.sizeHint().width() + 40)
 
     def _fit_player_bar(self, force=False):
         """Wide: one transport row + the nudge row (as in 1.3.1). Narrow: the transport (play/pause, knobs, time) on
