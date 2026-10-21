@@ -19,7 +19,7 @@ from .player import INST, AudioCache, Waveform, fmt_clock
 from .chrome import MARGIN, RADIUS
 from .export import SAVE_MODES, export_song, read_tags, target_dir  # noqa: F401  (re-exported for the CLI)
 from .formats import fmt_lrc_time, parse_time
-from .lyrics import LANGS, resolve_lang, sidecar_lyrics, split_lines
+from .lyrics import LANGS, clean_line, clean_lyrics, resolve_lang, sidecar_lyrics, split_lines
 from .theme import ACCENT, display_family
 LOW_CONF = 0.6
 LOW_WORD = 0.45   # Transcribe: a word Whisper gave less than this probability is shown in amber
@@ -352,8 +352,17 @@ class GlassWindow(QWidget, chrome.Frame):
             frow.addWidget(self.btn_song_dir_reset)
             lay.addLayout(frow)
             lrow = QHBoxLayout()
-            self.drop_hint = QLabel('Lyrics · or drop a .lrc .srt .vtt .ttml file here')
+            self.drop_hint = ElideLabel('Lyrics · or drop a .lrc .srt .vtt .ttml file here')
+            self.drop_hint.setToolTip('Paste the lyrics, or drop a .lrc .srt .vtt .ttml file on the box')
             self.drop_hint.setObjectName('hint')
+            self.drop_hint.setMinimumWidth(0)
+            from PySide6.QtWidgets import QSizePolicy
+            self.drop_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            self.btn_clean = PillButton('Clean up')
+            self.btn_clean.setToolTip('Clean up the lyrics: remove [Chorus] / (Verse 1) tags, a trailing . or , and '
+                                      'extra blank lines; capitalise each line (Ctrl+Z undoes it).\n'
+                                      'Right-click the lyrics box to turn the automatic clean-up on paste / import off.')
+            self.btn_clean.clicked.connect(self.clean_up_lyrics)
             self.btn_import = PillButton('Open file…')
             self.btn_import.setToolTip('Import timed lyrics or subtitles (.lrc, .srt, .vtt, .ttml): with the selected song, '
                                        'or on their own to convert them')
@@ -363,10 +372,11 @@ class GlassWindow(QWidget, chrome.Frame):
                                         'overwriting)')
             self.btn_convert.clicked.connect(self._convert_dialog)
             lrow.addWidget(self.drop_hint, 1)
+            lrow.addWidget(self.btn_clean)
             lrow.addWidget(self.btn_import)
             lrow.addWidget(self.btn_convert)
             lay.addLayout(lrow)
-            self.lyrics = QPlainTextEdit()
+            self.lyrics = LyricsEdit(self)
             self.lyrics.setPlaceholderText('Paste the lyrics here, one line per sung line.\n'
                                            'Lines like [Chorus] or (x2) are ignored.\n'
                                            'Or drop a timed .lrc, .srt, .vtt or .ttml file to import its lines and times.')
@@ -1935,6 +1945,54 @@ class GlassWindow(QWidget, chrome.Frame):
         self.app.settings[key] = value
         self.app.save_settings()
 
+    # ---------------------------------------------------------------- 1.4.0: lyrics clean-up
+    def auto_clean(self):
+        return bool(self.app.settings.get('clean_lyrics', True))
+
+    def set_auto_clean(self, on):
+        self._set('clean_lyrics', bool(on))
+        if hasattr(self, 'mac_actions') and 'auto_clean' in self.mac_actions:
+            self.mac_actions['auto_clean'].setChecked(bool(on))
+
+    def clean_up_lyrics(self):
+        """'Clean up': the lyrics box in one undoable edit (Ctrl+Z in the box); on a synced / imported song also the
+        lines in the list (Ctrl+Z in the list)."""
+        old = self.lyrics.toPlainText()
+        new = clean_lyrics(old)
+        song = self.app.current()
+        changed_lines = 0
+        if song and song.result:
+            L = song.result['lines']
+            keep = []
+            for l in L:
+                if l.get('inst'):
+                    keep.append(l)
+                    continue
+                t = clean_lyrics(l['text'])
+                if not t:
+                    changed_lines += 1
+                    continue
+                if t != l['text']:
+                    changed_lines += 1
+                keep.append(l)
+            if changed_lines:
+                edits.history(song).push(song, 'Clean up lyrics')
+                song.result['lines'] = [dict(l, text=clean_lyrics(l['text']).replace('\n', ' ')) if not l.get('inst') else l
+                                        for l in keep]
+                song.dirty = True
+                song.edited = True
+        if new != old:
+            c = self.lyrics.textCursor()
+            c.beginEditBlock()
+            c.select(QTextCursor.Document)
+            c.insertText(new)
+            c.endEditBlock()
+        if changed_lines and song:
+            self.after_edit(song)
+        self.status_lbl.setText('Lyrics cleaned up%s · Ctrl+Z undoes it.' % (
+            ' (%d line%s in the list)' % (changed_lines, '' if changed_lines == 1 else 's') if changed_lines else '')
+            if new != old or changed_lines else 'The lyrics are already clean.')
+
     TIMED_FILTER = 'Timed lyrics and subtitles (*.lrc *.srt *.vtt *.ttml *.xml *.dfxp);;All files (*)'
 
     def _import_dialog(self):
@@ -2051,6 +2109,11 @@ class GlassWindow(QWidget, chrome.Frame):
                          ('paste', 'Paste', QKeySequence.Paste), ('selectAll', 'Select All', QKeySequence.SelectAll)):
             act(e, k, t, lambda k=k: self._menu_edit(k), sc)
         e.addSeparator()
+        act(e, 'clean', 'Clean Up Lyrics', self.clean_up_lyrics, 'Ctrl+Shift+K')
+        a = act(e, 'auto_clean', 'Clean Up Pasted and Imported Lyrics', lambda: self.set_auto_clean(acts['auto_clean'].isChecked()))
+        a.setCheckable(True)
+        a.setChecked(self.auto_clean())
+        e.addSeparator()
         act(e, 'edit_line', 'Edit Line…', lambda: self.edit_line_dialog())
         act(e, 'delete_line', 'Delete Line\t⌫', lambda: self.delete_line())
 
@@ -2130,3 +2193,40 @@ class _TimedDrop(QObject):
                 self.win.drop_timed(ps)
                 return True
         return False
+
+
+class LyricsEdit(QPlainTextEdit):
+    """The lyrics box (1.4.0): pasted text is cleaned up (setting, on by default); the right-click menu adds
+    Clean Up Lyrics and the on/off switch."""
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+
+    def insertFromMimeData(self, src):
+        # several lines pasted = lyrics: cleaned up; one word / phrase pasted into a line stays as it is
+        if src.hasText() and not src.hasUrls() and '\n' in src.text().strip() and self.win.auto_clean():
+            self.insertPlainText(clean_lyrics(src.text()))
+            return
+        super().insertFromMimeData(src)
+
+    def contextMenuEvent(self, e):
+        m = self.createStandardContextMenu()
+        m.addSeparator()
+        m.addAction('Clean up lyrics', self.win.clean_up_lyrics)
+        a = m.addAction('Clean up pasted and imported lyrics automatically')
+        a.setCheckable(True)
+        a.setChecked(self.win.auto_clean())
+        a.toggled.connect(self.win.set_auto_clean)
+        m.exec(e.globalPos())
+
+
+class ElideLabel(QLabel):
+    """A hint label that ends in '…' instead of being cut when its column is narrow."""
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        p.setFont(self.font())
+        t = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, self.width())
+        p.drawText(self.rect(), int(self.alignment() | Qt.AlignVCenter), t)

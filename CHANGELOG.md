@@ -2,6 +2,17 @@
 
 ## 1.4.0 (2026-10-21)
 
+### Lyrics clean-up
+- Pasted lyrics (several lines) and imported files are tidied up automatically: section tags on their own line
+  (`[Chorus]`, `[Verse 1]`, `[Intro]`, `(Chorus)`, `(x2)`, `[Ρεφρέν]` …) and inline `[..]` tags removed; a trailing
+  `.` or `,` removed (`...`, `…`, `?`, `!` and closing quotes stay); the first letter of each line capitalised,
+  Greek too, after any leading quote or bracket; runs of blank lines collapsed to one stanza break.
+- **Clean up** button above the lyrics box (macOS Edit ▸ Clean Up Lyrics ⇧⌘K, also in the box's right-click menu)
+  cleans the text in one step; Ctrl+Z / ⌘Z undoes it. On a synced song it also cleans the lines in the list.
+- On by default; switch it off in the lyrics box's right-click menu (macOS: Edit ▸ Clean Up Pasted and Imported
+  Lyrics). Sung ad-libs in brackets such as `(ooh, the night)` are kept.
+- Tests: `tests/test_cleanup.py` (made-up lines) and a `lyrics_cleanup` self-test.
+
 ### Import timed lyrics and subtitles
 - Drop a **.lrc, .srt, .vtt or .ttml** on the lyrics box (or **Open file…**, macOS File ▸ Import Timed Lyrics… ⌘I).
   On the selected song it replaces the timed lines (asked first when there are unsaved lines; Ctrl+Z undoes it).

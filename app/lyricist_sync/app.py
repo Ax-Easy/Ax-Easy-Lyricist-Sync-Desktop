@@ -73,7 +73,7 @@ class App:
                          'save_mode': 'beside', 'song_dirs': {},
                          'formats': ['ttml', 'lrc', 'srt', 'vtt'], 'bom': False, 'auto_export': False,
                          'update_check': True, 'update_last': 0, 'update_skip': '',
-                         'whisper_model': 'auto', 'whisper_asked': ''}
+                         'whisper_model': 'auto', 'whisper_asked': '', 'clean_lyrics': True}
         self.settings.update(instrumental.DEFAULTS)
         self.update_state = None
         self._upd = _UpdSignal()
@@ -173,6 +173,13 @@ class App:
         if s.result:
             edits.history(s).push(s, 'Import %s' % name)
         fmt = r['format'].upper()
+        if self.settings.get('clean_lyrics', True):   # 1.4.0 clean-up: tags out, tidy punctuation and capitals
+            from .lyrics import clean_lyrics
+            r['lines'] = [dict(l, text=clean_lyrics(l['text']).replace('\n', ' ')) for l in r['lines']]
+            r['lines'] = [l for l in r['lines'] if l['text']]
+            if not r['lines']:
+                self.win.status_lbl.setText('Nothing left to import from %s after the clean-up.' % name)
+                return None
         s.result = {'lines': [dict(l, conf=1.0, why=['imported from %s' % fmt]) for l in r['lines']],
                     'source': 'import', 'import_format': r['format'], 'mode': 'import'}
         s.lyrics = '\n'.join(l['text'] for l in r['lines'])

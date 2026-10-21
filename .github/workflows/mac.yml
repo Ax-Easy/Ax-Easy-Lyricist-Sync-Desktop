@@ -90,7 +90,7 @@ jobs:
       - name: Unit tests (in-app updater against mocked GitHub API answers; player audio)
         run: |
           python tests/test_updater.py -v
-          python tests/test_import.py -v
+          python tests/test_import.py tests/test_cleanup.py -v
           python tests/test_audio.py -v
 
       - name: PyInstaller (universal2)

@@ -784,6 +784,35 @@ def run(report_path=None):
         return out
     check('import_timed', import_timed)
 
+    def lyrics_cleanup():
+        """1.4.0: pasted lyrics are cleaned up (tags, trailing . / , , capitals, blank lines), Ctrl+Z restores the paste,
+        the setting turns it off, Clean up works on the box."""
+        app, win = ctx['app'], ctx['app'].win
+        from PySide6.QtCore import QMimeData
+        raw = '[Verse 1]\npaper kites above the harbour,\n\n\n(Chorus)\nκαλησπέρα φεγγάρι.\n'
+        win.lyrics.setFocus()
+        win.lyrics.setPlainText('')
+        md = QMimeData()
+        md.setText(raw)
+        win.lyrics.insertFromMimeData(md)
+        assert win.lyrics.toPlainText() == 'Paper kites above the harbour\n\nΚαλησπέρα φεγγάρι', repr(win.lyrics.toPlainText())
+        win.lyrics.undo()
+        assert win.lyrics.toPlainText() == '', repr(win.lyrics.toPlainText())
+        was = win.auto_clean()
+        win.set_auto_clean(False)
+        win.lyrics.insertFromMimeData(md)
+        assert win.lyrics.toPlainText() == raw, repr(win.lyrics.toPlainText())
+        win.clean_up_lyrics()
+        assert win.lyrics.toPlainText() == 'Paper kites above the harbour\n\nΚαλησπέρα φεγγάρι'
+        win.lyrics.undo()
+        assert win.lyrics.toPlainText() == raw
+        win.set_auto_clean(was)
+        with open(app.settings_path, encoding='utf-8') as f:
+            assert json.load(f).get('clean_lyrics') is was
+        win.show_song(app.current())
+        return {'auto_clean': was}
+    check('lyrics_cleanup', lyrics_cleanup)
+
     def maximize():
         from . import winfx
         win = ctx['app'].win

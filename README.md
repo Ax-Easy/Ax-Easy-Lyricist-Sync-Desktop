@@ -33,6 +33,8 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 - **Import timed lyrics and subtitles** (.lrc, .srt, .vtt, .ttml): drop one on the lyrics box, with or without the
   song, then fine-tune, *Re-sync to audio*, or just export it to LRC and the other formats. **Convert files…** turns
   a batch of subtitle files into .lrc next to each one.
+- **Lyrics clean-up** on paste and import: `[Chorus]` / `(Verse 1)` tags, a trailing `.` or `,` and extra blank
+  lines removed, every line capitalised (Greek too); **Clean up** button, undo, on/off in the box's right-click menu.
 - **Resizable columns**: drag the divider between the two panels (double-click: 50 / 50; remembered).
 - **♪ lines** for intros, solos and outros, so a lyric display never shows a stale line.
 - **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT.
