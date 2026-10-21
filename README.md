@@ -55,6 +55,8 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 | ![Engine settings](docs/screenshots/engine-dark.webp) | ![Engine settings](docs/screenshots/engine-light.webp) |
 | ![Export confirmation](docs/screenshots/export-done-dark.webp) | ![Export confirmation](docs/screenshots/export-done-light.webp) |
 | ![Drop a .lrc, .srt, .vtt or .ttml on the lyrics box](docs/screenshots/import-drop-dark.webp) | ![An imported .srt on the song](docs/screenshots/import-light.webp) |
+| ![Convert files… / a .lrc without audio, exported through the normal Export](docs/screenshots/import-no-audio-dark.webp) | ![The column divider dragged left (double-click: 50 / 50)](docs/screenshots/columns-light.webp) |
+| ![Pasted lyrics cleaned up automatically](docs/screenshots/cleanup-dark.webp) | ![Pasted lyrics cleaned up automatically](docs/screenshots/cleanup-light.webp) |
 
 **macOS**
 

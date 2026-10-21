@@ -626,6 +626,23 @@ def import_scenes(app, win, dark, fixture_dir, label, out_dir, name):
     _save(compose_labeled(win, dark, label + ' · 1.4.0: the column divider dragged left (double-click: 50 / 50)'),
           os.path.join(out_dir, '%s_25_columns.png' % name))
     win.reset_split()
+    # lyrics clean-up: messy pasted lyrics (made-up) -> tags out, no trailing . / , , capitals, one stanza break
+    from PySide6.QtCore import QMimeData
+    song.result, song.status = None, 'Needs lyrics'
+    app.cur = app.songs.index(song)
+    win.refresh_queue(app.songs, app.cur)
+    win.show_song(song)
+    win.lyrics.setPlainText('')
+    md = QMimeData()
+    md.setText('[Verse 1]\nglass towers glowing in the rain,\nwe trace the light along the lane.\n\n\n'
+               '(Chorus)\nhold the line [x2], hold the line tonight!\n«χαρταετοί στον ουρανό.»\n')
+    if win.auto_clean():
+        win.lyrics.insertFromMimeData(md)
+    win.status_lbl.setText('Pasted lyrics cleaned up: [Verse 1] / (Chorus) / [x2] removed, trailing . and , removed, '
+                           'capitals · Ctrl+Z undoes it')
+    _pump(0.2)
+    _save(compose_labeled(win, dark, label + ' · 1.4.0: pasted lyrics, cleaned up automatically (Clean up button, Ctrl+Z)'),
+          os.path.join(out_dir, '%s_26_cleanup.png' % name))
     if s2 in app.songs:
         app.remove_song(app.songs.index(s2))
     for k, v in keep.items():
