@@ -15,10 +15,10 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 
 | | File | |
 |---|---|---|
-| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe) | per-user installer, about 41 MB |
-| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.3.2-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-1.3.2-mac-universal.dmg) | universal, signed and notarized by Apple, about 94 MB |
-| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | |
-| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | |
+| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.4.0/AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe) | per-user installer, 41.3 MB |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.4.0/AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg) | universal, signed and notarized by Apple, 94.4 MB |
+| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | 3.0 MB, always the latest |
+| **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | 3.1 MB, πάντα η τελευταία έκδοση |
 
 Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases).
 
@@ -88,8 +88,8 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 4. Press **Auto-sync** (or **Transcribe** when you have no lyrics). Check the amber lines, nudge or edit if needed.
 5. **Export** – TTML, LRC, SRT and VTT next to the audio or in a folder you choose.
 
-The full guide is in the manual ([English](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) ·
-[Ελληνικά](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.3.2/AxEasy-LyricistSync-Desktop-Manual-GR.pdf)) and below.
+The full guide is in the manual ([English](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) ·
+[Ελληνικά](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-GR.pdf)) and below.
 
 ## On macOS
 
@@ -353,9 +353,9 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.3.2.exe`, about 50 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe`, about 41 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
-- macOS: the DMG (about 94 MB) holds the universal app; drag it to Applications.
+- macOS: the DMG (about 94 MB, `AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg`) holds the universal app; drag it to Applications.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`
   (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync`). Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
