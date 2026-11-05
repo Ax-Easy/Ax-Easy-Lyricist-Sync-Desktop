@@ -101,6 +101,13 @@ class MsSyncTests(unittest.TestCase):
         self.song = Song([line('Steel hearts awaken', 4.0, 6.0,
                                [['Steel', 4.0, 4.5], ['hearts', 4.6, 5.2], ['awaken', 5.3, 5.9]])])
 
+    def test_set_text_clears_word_times(self):
+        E.set_text(self.song, 0, 'Steel hearts awake')
+        l = self.song.result['lines'][0]
+        self.assertEqual(l['text'], 'Steel hearts awake')
+        self.assertIsNone(l.get('word_times'))
+        self.assertIsNone(l.get('word_times_at'))
+
     def test_word_index_at(self):
         l = self.song.result['lines'][0]
         self.assertEqual(E.word_index_at(l, 4.1), 0)

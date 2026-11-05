@@ -1059,6 +1059,7 @@ def run(report_path=None):
         from PySide6.QtGui import QKeyEvent
         from PySide6.QtWidgets import QAbstractItemView
         from .lyrics import split_lines
+        from . import edits   # same module _fresh uses; must be in this scope (NameError on main)
         app, win = ctx['app'], ctx['app'].win
         s = _fresh(app, EDIT_LYRICS, EDIT_LINES)
         L = lambda: s.result['lines']   # noqa: E731
@@ -1069,12 +1070,16 @@ def run(report_path=None):
                 'Merge with next', 'Insert line above', 'Insert line below', '♪  Insert ♪ here', 'Mark as ♪', '♪ settings…',
                 'Undo', 'Redo', 'Delete line']
         assert labels == want, labels
-        # ms word sync keeps order (made-up lyrics; no real song files)
-        L()[0]['word_times'] = [['Hello', 1.0, 2.0], ['world', 2.0, 3.0]]
-        L()[0]['word_times_at'] = 1.0
-        assert edits.set_word_start(s, 0, 1, 2.5) is not None
-        wt = edits.current_words(L()[0])
-        assert abs(wt[1][1] - 2.5) < 0.001 and abs(wt[0][2] - 2.5) < 0.001, wt
+        # ms word sync on a throwaway song so undo/history of the main fixture stays clean
+        s_w = _fresh(app, 'Hello bright morning\n', [
+            {'idx': 0, 'text': 'Hello bright morning', 'start': 1.0, 'end': 3.0, 'repeat': False, 'flag': '',
+             'conf': 0.9, 'why': [], 'word_times': [['Hello', 1.0, 1.5], ['bright', 1.5, 2.2], ['morning', 2.2, 3.0]],
+             'word_times_at': 1.0}])
+        assert edits.set_word_start(s_w, 0, 1, 1.8) is not None
+        wt = edits.current_words(s_w.result['lines'][0])
+        assert abs(wt[1][1] - 1.8) < 0.001 and abs(wt[0][2] - 1.8) < 0.001, wt
+        s = _fresh(app, EDIT_LYRICS, EDIT_LINES)  # restore the review_edits fixture
+        L = lambda: s.result['lines']   # noqa: E731
         # inline: double-click / F2 opens the editor on the words; Enter commits through the delegate
         win.review.selectRow(0)
         win.review.setFocus()
