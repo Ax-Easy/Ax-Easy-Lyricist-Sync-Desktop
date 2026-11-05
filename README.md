@@ -6,7 +6,7 @@ exports **TTML, LRC, SRT and VTT**. It runs entirely on your computer: vocals ar
 with Whisper and aligned with Meta's MMS forced aligner, on an NVIDIA GPU, an Apple Silicon GPU or the CPU.
 No account, no upload, no cloud.
 
-![Lyricist Sync Desktop after an Auto-sync: song queue, waveform with line markers, timed line list](docs/screenshots/hero-dark.webp)
+![Lyricist Sync Desktop 1.5.0 after an Auto-sync: song queue, waveform with line markers, timed lines with live word highlight](docs/screenshots/hero-dark.webp)
 
 Made by [Ax-Easy](https://www.ax-easy.com) with the help of [Grok](https://grok.com)
 Inspired by the music of [Monitored](https://www.monitored.gr)
@@ -17,7 +17,7 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 |---|---|---|
 | **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.5.0.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.5.0/AxEasy-LyricistSync-Desktop-Setup-1.5.0.exe) | per-user installer, 41.3 MB |
 | **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.5.0-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.5.0/AxEasy-LyricistSync-Desktop-1.5.0-mac-universal.dmg) | universal, signed and notarized by Apple, 94.4 MB |
-| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | 3.0 MB, always the latest |
+| **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | 3.1 MB, always the latest |
 | **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | 3.1 MB, πάντα η τελευταία έκδοση |
 
 Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Releases](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases).
@@ -29,7 +29,8 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 - **Transcribe** songs without lyrics: Whisper writes the lines and their times; unsure words are marked amber.
 - **Confidence per line**, with the reason, so you only check the lines that need it.
 - **Review and edit**: a waveform with draggable line markers, a player with volume and balance knobs and 0.5×–1.5× speed, nudge buttons,
-  in-place editing, split / merge / insert, *Re-sync from here*, *Re-align this line*, full undo / redo.
+  in-place editing, split / merge / insert, *Re-sync from here*, *Re-align this line* / *Time words*, full undo / redo.
+- **Word-level timing** (1.5.0): live karaoke highlight of the current word during playback; click a word (or Tab) then **W** to set its start to the playhead in milliseconds; *Time words (re-align)* refreshes word times for one line without a full Auto-sync.
 - **Import timed lyrics and subtitles** (.lrc, .srt, .vtt, .ttml): drop one on the lyrics box, with or without the
   song, then fine-tune, *Re-sync to audio*, or just export it to LRC and the other formats. **Convert files…** turns
   a batch of subtitle files into .lrc next to each one.
@@ -37,7 +38,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
   lines removed, every line capitalised (Greek too); **Clean up** button, undo, on/off in the box's right-click menu.
 - **Resizable columns**: drag the divider between the two panels (double-click: 50 / 50; remembered).
 - **♪ lines** for intros, solos and outros, so a lyric display never shows a stale line.
-- **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT.
+- **Exports** byte-identical to the Ax-Easy Lyricist WordPress plugin formats: Apple-style TTML, LRC, SRT, VTT; optional **Words (.json)** and **Words (.lrc)** for word-level karaoke (off by default).
 - **Runs locally** on CUDA (NVIDIA), Metal (Apple Silicon) or the CPU; the Whisper size follows your hardware.
 - **Built-in updater** that checks SHA-256 (and, on macOS, the Apple signature) before installing.
 - Native look on each system: Mica on Windows 11, glass on Windows 10, vibrancy and the menu bar on macOS;
@@ -48,6 +49,7 @@ Every release lists the SHA-256 of each file in `SHA256SUMS`. All releases: [Rel
 | Dark | Light |
 |---|---|
 | ![Main window after a sync (dark)](docs/screenshots/main-dark.webp) | ![Main window after a sync (light)](docs/screenshots/main-light.webp) |
+| ![Live word highlight during playback (1.5.0, made-up lyrics)](docs/screenshots/word-highlight.webp) | ![Line menu: Time words / Set word start to playhead (W), Words export](docs/screenshots/line-menu-words-dark.webp) |
 | ![Transcribe without lyrics](docs/screenshots/transcribe-dark.webp) | ![Transcribe without lyrics](docs/screenshots/transcribe-light.webp) |
 | ![Edit Line dialog](docs/screenshots/edit-line-dark.webp) | ![Edit Line dialog](docs/screenshots/edit-line-light.webp) |
 | ![Player with the waveform and the volume and balance knobs](docs/screenshots/player-dark.webp) | ![Player with the waveform and the volume and balance knobs](docs/screenshots/player-light.webp) |
