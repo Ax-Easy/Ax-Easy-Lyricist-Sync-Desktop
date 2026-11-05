@@ -57,6 +57,25 @@ def ctc_words(s):
     return [w.strip("'") for w in s.split() if w.strip("'")]
 
 
+def timed_words(text, aligned, iso=''):
+    """The sung words of one line with their times: [[word, start, end], ...] (seconds), or None when the aligner's
+    words cannot be matched back to the written ones (then the line stays line-level). `aligned` is the aligner's
+    list of (start, end, score, tokens) per CTC word; a written word that makes no sound for the aligner (a lone
+    '&', a dash) is left out. A written word that splits in two ('x-ray') takes the span of both."""
+    toks = str(text).split()
+    if not toks or not aligned:
+        return None
+    counts = [len(ctc_words(r)) for r in romanize(toks, iso)]
+    if sum(counts) != len(aligned):
+        return None
+    out, i = [], 0
+    for tok, n in zip(toks, counts):
+        if n:
+            out.append([tok, round(float(aligned[i][0]), 3), round(float(aligned[i + n - 1][1]), 3)])
+            i += n
+    return out or None
+
+
 # ---------------------------------------------------------------- repeats
 def _word_cost(a, b, cache={}):
     if a == b:
@@ -637,7 +656,7 @@ class Engine:
     def _occ_words(self, texts, iso):
         return [ctc_words(r) for r in romanize(texts, iso)]
 
-    def _finish(self, occ, occ_texts, seq, an, anchors, have_transcript, first=0):
+    def _finish(self, occ, occ_texts, seq, an, anchors, have_transcript, first=0, iso=''):
         """occ (aligned dicts) -> result lines with flags and confidence."""
         out = []
         duration = an['duration']
@@ -658,6 +677,13 @@ class Engine:
             o['flag'] = ('too long' if dur > max(8.0, nw * 1.2) else 'too short' if dur < 0.25 + 0.08 * nw else '')
             al = o.pop('_o', None)
             if al is not None:
+                try:
+                    wt = timed_words(o['text'], al['words'], iso)
+                except Exception:   # noqa: BLE001  (word times are a bonus: never fail a sync over them)
+                    wt = None
+                if wt:
+                    o['word_times'] = wt
+                    o['word_times_at'] = round(o['start'], 3)
                 conf, why = TM.confidence(al, al['words'] and [None] * len(al['words']) or [], an['vad'],
                                           anchors[k] if anchors and k < len(anchors) else [], have_transcript)
                 o['conf'], o['why'] = conf, why
@@ -708,7 +734,7 @@ class Engine:
         TM.refine(occ, occ_words, em, fs, an['vad'], anchors, an['duration'], vocab, star, log=log)
         TM.monotonic(occ, an['duration'])
         an['align_cb'](1.0)
-        out = self._finish(occ, [lines[i] for i in seq], seq, an, anchors, have_tr)
+        out = self._finish(occ, [lines[i] for i in seq], seq, an, anchors, have_tr, iso=iso)
         t['align'] = time.time() - t1
         self.save_analysis(job['audio'], an)
         t['total'] = time.time() - T0
@@ -751,7 +777,7 @@ class Engine:
             occ[k0]['start'] = anchor
         TM.monotonic(occ, an['duration'], first=k0 + 1)
         seq = list(job.get('idx') or range(len(texts)))
-        out = self._finish(occ, texts, seq, an, None, False)
+        out = self._finish(occ, texts, seq, an, None, False, iso=iso)
         progress('align', 1.0)
         return {'from': k0, 'lines': out[k0:], 'vocals': vocal_regions(an['vad']),
                 'timings': {'total': round(time.time() - T0, 2)}}

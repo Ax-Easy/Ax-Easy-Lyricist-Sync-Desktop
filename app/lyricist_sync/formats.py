@@ -71,7 +71,8 @@ def build_cues(lines, duration=None):
     stamped = []
     for i, l in enumerate(lines or []):
         if l and _is_num(l.get('time')) and str(l.get('text') or '').strip() != '':
-            stamped.append({'start': l['time'], 'text': str(l['text']).strip(), 'i': i, 'end': l.get('end')})
+            stamped.append({'start': l['time'], 'text': str(l['text']).strip(), 'i': i, 'end': l.get('end'),
+                            'words': l.get('words'), 'inst': bool(l.get('inst'))})
     stamped.sort(key=lambda c: (c['start'], c['i']))
     cues = []
     for k, c in enumerate(stamped):
@@ -83,7 +84,7 @@ def build_cues(lines, duration=None):
             end = c['start'] + DEFAULT_LAST_CUE
         if _is_num(c['end']):
             end = min(c['end'], end)
-        cues.append({'start': c['start'], 'end': max(end, c['start']), 'text': c['text']})
+        cues.append({'start': c['start'], 'end': max(end, c['start']), 'text': c['text'], 'words': c['words'], 'inst': c['inst']})
     return cues
 
 
@@ -189,7 +190,76 @@ def build_ttml(lines, meta=None, duration=None):
     return '\n'.join(out) + '\n'
 
 
+# ---------------------------------------------------------------------------- word-level files (added in 1.5.0)
+# Not part of the plugin's formats: line-level files above stay byte-identical. A line carries 'words':
+# [[word, start, end], ...] when the aligner timed its words; a line without them is written line-level.
+def line_words(l):
+    """The timed words of a result line ([[w, start, end], ...]) shifted with the line if it was moved by hand, or None
+    when there are none or the text changed since (so a stale timing is never written)."""
+    ws = l.get('word_times')
+    if not ws or l.get('inst'):
+        return None
+    toks = str(l.get('text') or '').split()
+    it = iter(toks)
+    if not all(any(w[0] == t for t in it) for w in ws):     # the timed words must still be words of the line, in order
+        return None
+    shift = (l['start'] - l['word_times_at']) if _is_num(l.get('word_times_at')) and _is_num(l.get('start')) else 0.0
+    return [[w[0], round(w[1] + shift, 3), round(w[2] + shift, 3)] for w in ws]
+
+
+def _cue_words(c):
+    ws = c.get('words')
+    if not ws:
+        return None
+    out = []
+    for w, s, e in ws:
+        s = min(max(s, c['start']), c['end'])
+        e = min(max(e, s), c['end'])
+        out.append((w, s, e))
+    return out
+
+
+def build_words(lines, meta=None, duration=None):
+    """JSON for programs (the Ax-Easy AI Video Maker reads it): every line with its words and when each is sung."""
+    import json
+    meta = meta or {}
+    out_lines = []
+    for c in build_cues(lines, duration):
+        d = {'start': round(c['start'], 3), 'end': round(c['end'], 3), 'text': c['text']}
+        if c['inst']:
+            d['instrumental'] = True
+        ws = _cue_words(c)
+        if ws:
+            d['words'] = [{'w': w, 'start': round(s, 3), 'end': round(e, 3)} for w, s, e in ws]
+        out_lines.append(d)
+    doc = {'format': 'ax-easy-words', 'version': 1, 'title': str(meta.get('ti') or ''), 'artist': str(meta.get('ar') or ''),
+           'language': bcp47(meta.get('lang'), lines), 'duration': duration if _is_num(duration) else None, 'lines': out_lines}
+    return json.dumps(doc, ensure_ascii=False, indent=1) + '\n'
+
+
+def build_wlrc(lines, meta=None, duration=None):
+    """Enhanced ('A2') LRC: [mm:ss.xx]<mm:ss.xx>word <mm:ss.xx>word <mm:ss.xx>, the words timed one by one."""
+    meta = meta or {}
+    out = []
+    for k in ('ti', 'ar', 'al'):
+        v = _clean_meta(meta.get(k))
+        if v:
+            out.append('[' + k + ':' + v + ']')
+    for c in build_cues(lines, duration):
+        ws = _cue_words(c)
+        if ws:
+            out.append('[' + fmt_lrc_time(c['start']) + ']' + ' '.join('<' + fmt_lrc_time(s) + '>' + w for w, s, _e in ws) +
+                       ' <' + fmt_lrc_time(ws[-1][2]) + '>')
+        else:
+            out.append('[' + fmt_lrc_time(c['start']) + ']' + c['text'])
+    return '\n'.join(out) + '\n' if out else ''
+
+
 def build(fmt, lines, meta=None, duration=None):
+    if fmt == 'words':
+        return build_words(lines, meta, duration)
+    if fmt == 'wlrc':
+        return build_wlrc(lines, meta, duration)
     if fmt == 'srt':
         return build_srt(lines, duration)
     if fmt == 'vtt':
@@ -250,4 +320,4 @@ def decode_text(data):
         return data.decode('cp1253', 'replace'), 'windows-1253'
 
 
-EXTS = {'ttml': '.ttml', 'lrc': '.lrc', 'srt': '.srt', 'vtt': '.vtt'}
+EXTS = {'ttml': '.ttml', 'lrc': '.lrc', 'srt': '.srt', 'vtt': '.vtt', 'words': '.words.json', 'wlrc': '.words.lrc'}

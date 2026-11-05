@@ -506,9 +506,12 @@ class GlassWindow(QWidget, chrome.Frame):
             lay.addLayout(exp)
             checks = QHBoxLayout()
             self.fmt_checks = {}
-            for fmt in ('ttml', 'lrc', 'srt', 'vtt'):
-                c = QCheckBox(fmt.upper())
-                c.setChecked(True)
+            for fmt in ('ttml', 'lrc', 'srt', 'vtt', 'words', 'wlrc'):
+                c = QCheckBox({'words': 'Words (.json)', 'wlrc': 'Words (.lrc)'}.get(fmt) or fmt.upper())
+                if fmt in ('words', 'wlrc'):
+                    c.setToolTip('Every word with the time it is sung: for programs that need word-level timing '
+                                 '(.json) or karaoke players (.lrc). Lines the aligner could not time word by word stay line-level.')
+                c.setChecked(fmt not in ('words', 'wlrc'))
                 self.fmt_checks[fmt] = c
                 checks.addWidget(c)
             self.bom = QCheckBox('UTF-8 BOM for SRT')

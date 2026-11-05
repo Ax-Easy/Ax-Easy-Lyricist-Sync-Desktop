@@ -1,7 +1,7 @@
 """Export: where each song's files go, never-silent overwrites, and writing the formats."""
 import os
 
-from .formats import EXTS, build, build_base_name, encode_file
+from .formats import EXTS, build, build_base_name, encode_file, line_words
 
 SAVE_MODES = ('beside', 'folder', 'ask')  # next to the audio file (default) / a chosen folder / ask every time
 
@@ -54,7 +54,8 @@ def export_song(song, options, on_conflict=None):
             base = keep_both_base(out_dir, base, formats)
     # sung lines linger 0.4 s (cut at the next line); ♪ lines end where they end
     pad = 0 if song.result.get('source') == 'import' else 0.4   # imported files keep their own end times
-    lines = [{'text': l['text'], 'time': l['start'], 'end': l['end'] + (0 if l.get('inst') else pad)} for l in song.result['lines']]
+    lines = [{'text': l['text'], 'time': l['start'], 'end': l['end'] + (0 if l.get('inst') else pad), 'words': line_words(l),
+              'inst': bool(l.get('inst'))} for l in song.result['lines']]
     m = {'ti': info['title'], 'ar': info['artist'], 'al': song.tags.get('album', ''), 'lang': song.iso}
     written = []
     for fmt in formats:
