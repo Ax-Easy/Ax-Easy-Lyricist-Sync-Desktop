@@ -215,6 +215,8 @@ def mark_edited(l, why='edited by hand'):
     l['flag'] = ''
     l.pop('guessed', None)
     l.pop('words', None)        # amber words described Whisper's text, not this one
+    l.pop('word_times', None)   # timed words described the old text — Time words to refresh
+    l.pop('word_times_at', None)
 
 
 def new_line(text, start, end, **kw):
