@@ -1064,10 +1064,17 @@ def run(report_path=None):
         L = lambda: s.result['lines']   # noqa: E731
         # context menu: the labels of the manual
         labels = [a.text() for a in win.review_menu(1).actions() if not a.isSeparator()]
-        want = ['✎  Edit Line…', '▶  Play from line', '⟲  Re-sync from here', '◎  Re-align this line', 'Split line at cursor',
+        want = ['✎  Edit Line…', '▶  Play from line', '⟲  Re-sync from here', '◎  Re-align this line',
+                '◎  Time words (re-align)', '⏱  Set word start to playhead', 'Split line at cursor',
                 'Merge with next', 'Insert line above', 'Insert line below', '♪  Insert ♪ here', 'Mark as ♪', '♪ settings…',
                 'Undo', 'Redo', 'Delete line']
         assert labels == want, labels
+        # ms word sync keeps order (made-up lyrics; no real song files)
+        L()[0]['word_times'] = [['Hello', 1.0, 2.0], ['world', 2.0, 3.0]]
+        L()[0]['word_times_at'] = 1.0
+        assert edits.set_word_start(s, 0, 1, 2.5) is not None
+        wt = edits.current_words(L()[0])
+        assert abs(wt[1][1] - 2.5) < 0.001 and abs(wt[0][2] - 2.5) < 0.001, wt
         # inline: double-click / F2 opens the editor on the words; Enter commits through the delegate
         win.review.selectRow(0)
         win.review.setFocus()
