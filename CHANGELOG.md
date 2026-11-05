@@ -1,3 +1,12 @@
+## 1.5.0 (2026-11-05)
+
+### Word-level timing
+- Auto-sync keeps per-word times on each line (`word_times`).
+- Live karaoke highlight of the current word during playback.
+- Millisecond word sync: select a word, press **W** (or the review menu) to set its start to the playhead.
+- Re-align / **Time words** refreshes word times after text edits (no full Auto-sync required).
+- Optional export: **Words (.json)** and **Words (.lrc)** (enhanced karaoke LRC). Line-level LRC/SRT/VTT/TTML unchanged.
+
 # Changelog
 
 ## 1.4.0 (2026-10-21)

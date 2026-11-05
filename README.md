@@ -15,8 +15,8 @@ Inspired by the music of [Monitored](https://www.monitored.gr)
 
 | | File | |
 |---|---|---|
-| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.4.0/AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe) | per-user installer, 41.3 MB |
-| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.4.0/AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg) | universal, signed and notarized by Apple, 94.4 MB |
+| **Windows 10 / 11** (64-bit) | [AxEasy-LyricistSync-Desktop-Setup-1.5.0.exe](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.5.0/AxEasy-LyricistSync-Desktop-Setup-1.5.0.exe) | per-user installer, 41.3 MB |
+| **macOS 11+** (Apple Silicon) / **12+** (Intel) | [AxEasy-LyricistSync-Desktop-1.5.0-mac-universal.dmg](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/download/v1.5.0/AxEasy-LyricistSync-Desktop-1.5.0-mac-universal.dmg) | universal, signed and notarized by Apple, 94.4 MB |
 | **Manual** (English) | [AxEasy-LyricistSync-Desktop-Manual-EN.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-EN.pdf) | 3.0 MB, always the latest |
 | **Εγχειρίδιο** (Ελληνικά) | [AxEasy-LyricistSync-Desktop-Manual-GR.pdf](https://github.com/Ax-Easy/Ax-Easy-Lyricist-Sync-Desktop/releases/latest/download/AxEasy-LyricistSync-Desktop-Manual-GR.pdf) | 3.1 MB, πάντα η τελευταία έκδοση |
 
@@ -266,6 +266,16 @@ Formats (identical to Lyricist 1.1.0, verified byte-for-byte against its `format
 - **SRT**: UTF-8, with an optional BOM.
 - **VTT**: `WEBVTT`, never with a BOM.
 
+### Word-level timing (1.5.0)
+
+Auto-sync already times every sung word. From 1.5.0 those times stay on each line:
+
+- **Live karaoke highlight** — while the song plays, the current word is highlighted in the review list.
+- **Millisecond word sync** — click a word (or Tab / Shift+Tab between words), then press **W** to set that word’s start to the playhead. Right-click → *Set word start to playhead*. Words stay ordered inside the line; nudging the whole line still shifts its words with it.
+- **Time words** — if a line has no word times yet (or you edited the text), right-click → *Time words (re-align)* (or *Re-align this line*). Re-align refreshes the word times so you do not need a full Auto-sync again.
+- **Export** — optional **Words (.json)** (`*.words.json`, for programs such as the Ax-Easy AI Video Maker) and **Words (.lrc)** (`*.words.lrc`, enhanced karaoke LRC with `<mm:ss.xx>word` stamps). Off by default. Ordinary LRC / SRT / VTT / TTML stay line-level and unchanged.
+- Importing an enhanced LRC still strips word stamps (line-level only), same as 1.4.0.
+
 ### Importing timed lyrics and subtitles (1.4.0)
 
 - Drop a **.lrc, .srt, .vtt or .ttml** file on the lyrics box, or use **Open file…** (macOS: File ▸ Import Timed
@@ -353,9 +363,9 @@ LyricistSync.exe --force-win10-style                     use the Windows 10 wind
 
 ## Installing, first run and disk space
 
-- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.4.0.exe`, about 41 MB) is per-user, so it needs no admin rights.
+- The installer (`AxEasy-LyricistSync-Desktop-Setup-1.5.0.exe`, about 41 MB) is per-user, so it needs no admin rights.
   It adds a Start-menu entry, an optional desktop shortcut and an uninstaller.
-- macOS: the DMG (about 94 MB, `AxEasy-LyricistSync-Desktop-1.4.0-mac-universal.dmg`) holds the universal app; drag it to Applications.
+- macOS: the DMG (about 94 MB, `AxEasy-LyricistSync-Desktop-1.5.0-mac-universal.dmg`) holds the universal app; drag it to Applications.
 - On first run, the app downloads the sync engine into `%LOCALAPPDATA%\Ax-Easy\LyricistSync`
   (macOS: `~/Library/Application Support/Ax-Easy/LyricistSync`). Every file is
   SHA256-checked, and an interrupted download resumes where it stopped (HTTP Range). The setup window shows 7 steps:
