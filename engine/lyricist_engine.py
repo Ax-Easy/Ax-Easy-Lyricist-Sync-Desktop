@@ -802,10 +802,19 @@ class Engine:
             raise RuntimeError('The line does not fit between %.2f s and %.2f s.' % (lo, hi))
         o = occ[0]
         conf, why = TM.confidence(o, words[0], an['vad'], [], False)
+        start = round(max(lo, o['start']), 3)
+        end = round(min(hi, max(o['end'], o['start'] + 0.1)), 3)
+        try:
+            wt = timed_words(job['text'], o.get('words') or [], job.get('iso') or '')
+        except Exception:   # noqa: BLE001
+            wt = None
         progress('align', 1.0)
-        return {'realign': True, 'row': job.get('row'), 'text': job['text'],
-                'start': round(max(lo, o['start']), 3), 'end': round(min(hi, max(o['end'], o['start'] + 0.1)), 3),
-                'conf': round(conf, 3), 'why': why, 'timings': {'total': round(time.time() - T0, 2)}}
+        out = {'realign': True, 'row': job.get('row'), 'text': job['text'],
+               'start': start, 'end': end, 'conf': round(conf, 3), 'why': why,
+               'timings': {'total': round(time.time() - T0, 2)}}
+        if wt:
+            out['word_times'] = wt
+        return out
 
     def transcribe_job(self, job, progress):
         """No lyrics needed: Whisper writes the lines (with times and per-word confidence).

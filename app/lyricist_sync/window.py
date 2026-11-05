@@ -481,6 +481,8 @@ class GlassWindow(QWidget, chrome.Frame):
             self.review_delegate.split.connect(lambda r, cur, text: self.split_line(r, cur, text))
             self.review.setToolTip('')
             self.review.play_line.connect(self._play_row)
+        self.review.word_clicked.connect(self._word_clicked)
+        self.review.itemSelectionChanged.connect(self._clear_word_sel)
             self.review.setContextMenuPolicy(Qt.CustomContextMenu)
             self.review.customContextMenuRequested.connect(self._review_menu)
             self.review.itemSelectionChanged.connect(lambda: self.wave.set_selected(self.review.currentRow()))
@@ -1133,8 +1135,14 @@ class GlassWindow(QWidget, chrome.Frame):
             txt.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | (Qt.NoItemFlags if inst else Qt.ItemIsEditable))
             if not inst:
                 tip += '\nDouble-click or F2 to edit the words · right-click for more'
-            if l.get('words') and not inst and any(w[3] < LOW_WORD for w in l['words']):
+                tip += '\nClick a timed word, then W to set its start to the playhead (ms)'
+            # Per-word paint: Whisper amber words, else Auto-sync word_times for karaoke / ms sync
+            if not inst and l.get('words') and any(w[3] < LOW_WORD for w in l['words']):
                 txt.setData(WORDS_ROLE, [(w[0], w[3] < LOW_WORD) for w in l['words']])
+            else:
+                wt = edits.current_words(l) if not inst else None
+                if wt:
+                    txt.setData(WORDS_ROLE, [(w[0], False) for w in wt])
             txt.setToolTip(tip)
             txt.setData(Qt.UserRole + 1, 'inst' if inst else '')
             if inst:
@@ -1294,6 +1302,13 @@ class GlassWindow(QWidget, chrome.Frame):
         a = m.addAction('◎  Re-align this line', lambda: self.realign_line(row))
         a.setEnabled(not inst and not busy)
         a.setToolTip('Run the aligner again for this line only, between the lines around it (after big word changes)')
+        a = m.addAction('◎  Time words (re-align)', lambda: self.time_words(row))
+        a.setEnabled(not inst and not busy)
+        a.setToolTip('Re-align this line so every sung word gets a time (needed before W / karaoke highlight)')
+        a = m.addAction('⏱  Set word start to playhead', lambda: self.stamp_word())
+        a.setShortcut(QKeySequence('W'))
+        a.setEnabled(not inst and bool(edits.current_words(l)))
+        a.setToolTip('Set the selected word\'s start to the playhead (millisecond accuracy)')
         m.addSeparator()
         a = m.addAction('Split line at cursor', lambda: self.split_line(row))
         a.setEnabled(not inst and len(l['text'].split()) > 1)
@@ -1639,6 +1654,89 @@ class GlassWindow(QWidget, chrome.Frame):
             return
         self.app.realign(song, row)
 
+    def time_words(self, row=None):
+        """Re-align one line so it gets (or refreshes) word_times — used when a line has none yet."""
+        row = self.review.currentRow() if row is None else row
+        self.realign_line(row)
+
+    def _word_clicked(self, row, wi):
+        self._word_sel_row = row
+        self.review.selectRow(row)
+        self.review._sel_word = wi
+        self.review.viewport().update()
+        L = self._lines()
+        if 0 <= row < len(L):
+            ws = edits.current_words(L[row]) or []
+            if 0 <= wi < len(ws):
+                self._word_status(row, wi, ws[wi][0])
+
+    def _word_status(self, row, wi, word):
+        self.status_lbl.setText(
+            'Line %d · word %d “%s” · W = set start to playhead (%s) · Tab = next word · Time words = re-align' % (
+                row + 1, wi + 1, word, fmt_clock(self.position())))
+
+    def _selected_word(self):
+        row = self.review.currentRow()
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return None
+        ws = edits.current_words(L[row])
+        if not ws:
+            return None
+        wi = getattr(self.review, '_sel_word', -1)
+        if not (0 <= wi < len(ws)):
+            wi = edits.word_index_at(L[row], self.position())
+            if wi < 0:
+                wi = 0
+            self.review._sel_word = wi
+        return row, wi, ws
+
+    def stamp_word(self):
+        """W: set the selected (or current karaoke) word's start to the playhead, millisecond accuracy."""
+        got = self._selected_word()
+        if not got:
+            row = self.review.currentRow()
+            L = self._lines()
+            if 0 <= row < len(L) and not L[row].get('inst') and not edits.current_words(L[row]):
+                self.status_lbl.setText('No word times on this line yet — Time words (re-align) first, or right-click → Time words')
+            return False
+        row, wi, ws = got
+        t = round(self.position(), 3)
+        label = 'Word “%s” → %s' % (ws[wi][0], fmt_clock(t))
+        def do(s, r=row, i=wi, tt=t):
+            return edits.set_word_start(s, r, i, tt)
+        if self._edit(label, do, select=row, tag=('word', row, wi)):
+            self.review._sel_word = wi
+            self.status_lbl.setText('Word %d “%s” now starts at %s' % (wi + 1, ws[wi][0], fmt_clock(t)))
+            return True
+        return False
+
+    def _cycle_word(self, delta):
+        row = self.review.currentRow()
+        L = self._lines()
+        if not (0 <= row < len(L)):
+            return False
+        ws = edits.current_words(L[row])
+        if not ws:
+            return False
+        wi = getattr(self.review, '_sel_word', -1)
+        if wi < 0:
+            wi = edits.word_index_at(L[row], self.position())
+            if wi < 0:
+                wi = 0
+        else:
+            wi = (wi + delta) % len(ws)
+        self.review._sel_word = wi
+        self.review.viewport().update()
+        self._word_status(row, wi, ws[wi][0])
+        return True
+
+    def _clear_word_sel(self):
+        # Keep the selection when the same row stays selected (word click also selects the row).
+        if getattr(self, '_word_sel_row', None) != self.review.currentRow():
+            self.review._sel_word = -1
+        self._word_sel_row = self.review.currentRow()
+
     def undo(self):
         self._history_step(True)
 
@@ -1880,10 +1978,13 @@ class GlassWindow(QWidget, chrome.Frame):
                     row = i
         if row >= 0 and t > L[row].get('end', t) + 1.0 and not L[row].get('inst'):
             row = -1 if not any(l['start'] > t for l in L) else row
-        if row == self._active:
+        wi = edits.word_index_at(L[row], t) if row >= 0 else -1
+        if row == self._active and wi == getattr(self.review, '_active_word', -1):
             return
         old, self._active = self._active, row
+        old_w = getattr(self.review, '_active_word', -1)
         self.review._active_row = row
+        self.review._active_word = wi
         vp = self.review.viewport()
         for r in (old, row):
             if r >= 0:
@@ -1892,6 +1993,10 @@ class GlassWindow(QWidget, chrome.Frame):
         if follow and row >= 0 and _now() - getattr(self, '_scrolled_at', 0) > 3.0 \
                 and self.review.state() != QAbstractItemView.State.EditingState:
             self.review.scrollTo(self.review.model().index(row, 1), QAbstractItemView.ScrollHint.PositionAtCenter)
+        if row >= 0 and wi >= 0 and (row != old or wi != old_w):
+            ws = edits.current_words(L[row])
+            if ws and 0 <= wi < len(ws):
+                self._word_status(row, wi, ws[wi][0])
 
     def _user_scrolled(self):
         self._scrolled_at = _now()
@@ -1941,6 +2046,11 @@ class GlassWindow(QWidget, chrome.Frame):
         if k == Qt.Key_S and has and self.review.currentRow() >= 0:
             self.stamp()
             return True
+        if k == Qt.Key_W and has and self.review.currentRow() >= 0:
+            self.stamp_word()
+            return True
+        if k == Qt.Key_Tab and has and self.review.currentRow() >= 0 and not in_queue:
+            return self._cycle_word(-1 if mods & Qt.ShiftModifier else 1)
         if (k == Qt.Key_Delete or (k == Qt.Key_Backspace and macfx.IS_MAC)) and has and not in_queue:
             return self.delete_line()   # Delete; on a Mac the ⌫ key
         if k == Qt.Key_F2 and has and not in_queue:

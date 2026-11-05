@@ -442,7 +442,9 @@ def realign_window(lines, row, duration):
     return round(max(0.0, lo), 3), round(hi, 3)
 
 
-def apply_realign(song, row, start, end, conf=None, why=None):
+def apply_realign(song, row, start, end, conf=None, why=None, word_times=None):
+    """Apply a single-line re-align. `word_times` is [[word, start, end], ...] from the engine
+    (or None / missing to clear stale word timings after a text change)."""
     lines = song.result['lines']
     l = lines[row]
     l['start'], l['end'] = round(start, 3), round(max(end, start + 0.1), 3)
@@ -451,9 +453,89 @@ def apply_realign(song, row, start, end, conf=None, why=None):
     if conf is not None:
         l['conf'] = conf
         l['why'] = ['re-aligned'] + list(why or [])
+    if word_times:
+        l['word_times'] = [[w[0], round(float(w[1]), 3), round(float(w[2]), 3)] for w in word_times]
+        l['word_times_at'] = round(l['start'], 3)
+    else:
+        l.pop('word_times', None)
+        l.pop('word_times_at', None)
     _fix_neighbours(lines, row)
     song.edited = True
     song.dirty = True
+
+
+def current_words(l):
+    """Timed words of a line shifted with any line nudge ([[w, start, end], ...]), or None."""
+    from .formats import line_words
+    return line_words(l)
+
+
+def word_index_at(l, t):
+    """Index of the word sung at time `t` (seconds), or -1."""
+    ws = current_words(l)
+    if not ws:
+        return -1
+    t = float(t)
+    for i, (_w, s, e) in enumerate(ws):
+        if s - 0.001 <= t < e + 0.001:
+            return i
+    if t < ws[0][1]:
+        return 0
+    if t >= ws[-1][2]:
+        return len(ws) - 1
+    # in a gap between words: pick the nearest start
+    best, bi = None, 0
+    for i, (_w, s, e) in enumerate(ws):
+        d = min(abs(t - s), abs(t - e))
+        if best is None or d < best:
+            best, bi = d, i
+    return bi
+
+
+def set_word_start(song, row, wi, t):
+    """Set word `wi` of line `row` to start at `t` (seconds, ms precision). Keeps words ordered and
+    inside the line; previous word's end moves to the new start when they were adjacent. Returns
+    the new [[w, start, end], ...] or None when it cannot be applied."""
+    lines = song.result['lines']
+    if not (0 <= row < len(lines)):
+        return None
+    l = lines[row]
+    if l.get('inst'):
+        return None
+    ws = current_words(l)
+    if not ws or not (0 <= wi < len(ws)):
+        return None
+    lo = float(l['start'])
+    hi = float(l['end'])
+    # clamp against neighbours and the line
+    prev_lo = (ws[wi - 1][1] + 0.02) if wi > 0 else lo
+    next_hi = (ws[wi + 1][1] - 0.02) if wi + 1 < len(ws) else hi
+    t = round(max(prev_lo, min(float(t), next_hi, hi - 0.02)), 3)
+    if t < lo:
+        t = round(lo, 3)
+    new = [list(w) for w in ws]
+    old_s = new[wi][1]
+    new[wi][1] = t
+    # keep a minimum duration for this word
+    new[wi][2] = max(new[wi][2], t + 0.05)
+    if wi + 1 < len(new):
+        new[wi][2] = min(new[wi][2], new[wi + 1][1])
+    else:
+        new[wi][2] = min(new[wi][2], hi)
+    # previous word ends where this one starts (closes a gap or overlap)
+    if wi > 0:
+        new[wi - 1][2] = max(new[wi - 1][1] + 0.05, t)
+    # clamp all into the line
+    for w in new:
+        w[1] = max(lo, min(w[1], hi))
+        w[2] = max(w[1] + 0.02, min(w[2], hi))
+    l['word_times'] = [[w[0], round(w[1], 3), round(w[2], 3)] for w in new]
+    l['word_times_at'] = round(l['start'], 3)
+    l['manual'] = True
+    l['edited'] = True
+    song.edited = True
+    song.dirty = True
+    return l['word_times']
 
 
 def is_low(l):

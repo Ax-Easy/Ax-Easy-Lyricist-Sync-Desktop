@@ -525,7 +525,7 @@ class App:
             if row is not None and 0 <= row < len(L) and L[row]['text'] == res.get('text'):
                 old = L[row]['start']
                 edits.history(s).push(s, 'Re-align line %d' % (row + 1))
-                edits.apply_realign(s, row, res['start'], res['end'], res.get('conf'), res.get('why'))
+                edits.apply_realign(s, row, res['start'], res['end'], res.get('conf'), res.get('why'), res.get('word_times'))
                 if s is self.current():
                     self.win.after_edit(s, row)
                 self.win.status_lbl.setText('Line %d re-aligned: %s → %s (%d%% sure) · Ctrl+Z to undo' % (

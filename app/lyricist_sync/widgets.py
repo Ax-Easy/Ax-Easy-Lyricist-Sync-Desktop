@@ -263,8 +263,11 @@ class GlassProgress(QWidget):
 
 
 class ReviewTable(QTableWidget):
-    """Line review list: ▶ | line | start | end | note. Start is editable (double-click)."""
+    """Line review list: ▶ | line | start | end | note. Start is editable (double-click).
+    Word-level: `_active_word` is the karaoke word on the playing line; `_sel_word` is the word
+    selected for ms sync. `word_clicked(row, wi)` when the user clicks a timed word in the Line cell."""
     play_line = Signal(int)
+    word_clicked = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(0, 5, parent)
@@ -282,6 +285,8 @@ class ReviewTable(QTableWidget):
             self.setColumnWidth(i, w)
         self.cellClicked.connect(lambda r, c: self.play_line.emit(r) if c == 0 else None)
         self._active_row = -1   # the line playing now (painted by GlassRowDelegate)
+        self._active_word = -1  # karaoke word index on `_active_row`
+        self._sel_word = -1     # word selected for ms sync on the current row
 
 
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem  # noqa: E402
@@ -421,32 +426,80 @@ class GlassRowDelegate(QStyledItemDelegate):
         if words:
             o.text = ''
         view.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, o, p, view)
-        if words:   # Transcribe: draw the words ourselves, the unsure ones in amber
-            self._paint_words(p, o, words, view)
+        if words:   # Transcribe amber words, and/or karaoke + selected word from word_times
+            self._paint_words(p, o, words, view, idx.row())
 
-    def _paint_words(self, p, o, words, view):
+    def _paint_words(self, p, o, words, view, row=-1):
         p.save()
         r = view.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, o, view).adjusted(3, 0, -3, 0)
         p.setClipRect(r)
         p.setFont(o.font)
         fm = p.fontMetrics()
         base = o.palette.color(QPalette.ColorRole.Text)
+        hi = QColor(ACCENT) if STATE['dark'] else QColor(ACCENT).darker(110)
+        sel_bg = QColor(255, 106, 1, 90 if STATE['dark'] else 70)
         x = r.left()
         y = r.top() + (r.height() + fm.ascent() - fm.descent()) / 2
         space = fm.horizontalAdvance(' ')
-        for w, low in words:
+        active = getattr(view, '_active_word', -1) if row == getattr(view, '_active_row', -1) else -1
+        selected = getattr(view, '_sel_word', -1) if row == view.currentRow() else -1
+        for i, pair in enumerate(words):
+            w, low = pair[0], pair[1]
             w = w.strip()
             wd = fm.horizontalAdvance(w)
             if x + wd > r.right():
                 p.setPen(base)
                 p.drawText(QPointF(x, y), '…')
                 break
-            p.setPen(QColor(AMBER) if low else base)
+            if i == selected:
+                br = QRectF(x - 2, r.top() + 3, wd + 4, r.height() - 6)
+                path = QPainterPath()
+                path.addRoundedRect(br, 4, 4)
+                p.fillPath(path, sel_bg)
+            if i == active:
+                p.setPen(hi)
+                f = QFont(o.font)
+                f.setBold(True)
+                p.setFont(f)
+            else:
+                p.setPen(QColor(AMBER) if low else base)
+                p.setFont(o.font)
             p.drawText(QPointF(x, y), w)
-            if low:
+            if low and i != active:
                 p.drawLine(QPointF(x, y + 2.5), QPointF(x + wd, y + 2.5))
             x += wd + space
         p.restore()
+
+    def word_at(self, idx, x):
+        """Word index under x (viewport x of the Line cell), or -1."""
+        words = idx.data(WORDS_ROLE)
+        if not words:
+            return -1
+        view = self.view
+        opt = QStyleOptionViewItem()
+        self.initStyleOption(opt, idx)
+        r = view.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, view).adjusted(3, 0, -3, 0)
+        fm = view.fontMetrics()
+        cx = r.left()
+        space = fm.horizontalAdvance(' ')
+        for i, pair in enumerate(words):
+            w = str(pair[0]).strip()
+            wd = fm.horizontalAdvance(w)
+            if cx <= x <= cx + wd + space / 2:
+                return i
+            cx += wd + space
+            if cx > r.right():
+                break
+        return -1
+
+    def editorEvent(self, event, model, option, index):
+        from PySide6.QtCore import QEvent
+        if index.column() == 1 and event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            wi = self.word_at(index, event.position().x() if hasattr(event, 'position') else event.x())
+            if wi >= 0 and hasattr(self.view, 'word_clicked'):
+                self.view.word_clicked.emit(index.row(), wi)
+                return True
+        return super().editorEvent(event, model, option, index)
 
 
 class Knob(QWidget):
