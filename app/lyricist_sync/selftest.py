@@ -1071,7 +1071,7 @@ def run(report_path=None):
         assert labels == want, labels
         # ms word sync keeps order (made-up lyrics; no real song files)
         from . import edits as _edits
-        L()[0]['word_times'] = [['Hello', 1.0, 2.0], ['world', 2.0, 3.0]]
+        L()[0]['word_times'] = [['Καλησπέρα', 1.0, 2.0], ['κόσμε', 2.0, 3.0]]
         L()[0]['word_times_at'] = 1.0
         assert _edits.set_word_start(s, 0, 1, 2.5) is not None
         wt = _edits.current_words(L()[0])
